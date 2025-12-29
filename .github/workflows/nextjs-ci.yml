@@ -68,7 +68,7 @@ jobs:
         working-directory: ${{ inputs.working-directory }}
 
       - name: Upload build artifact
-        uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f
+        uses: actions/upload-artifact@v3  # Change from the hash to @v3
         with:
           name: nextjs-build
           path: |
@@ -80,7 +80,7 @@ jobs:
     runs-on: ${{ inputs.deploy-runner }}
     steps:
       - name: Download build artifact
-        uses: actions/download-artifact@37930b1c2abaa49bbe596cd826c3c89aef350131
+        uses: actions/download-artifact@v3  # Change from the hash to @v3
         with:
           name: nextjs-build
       
