@@ -72,7 +72,7 @@ jobs:
         working-directory: ${{ inputs.working-directory }}
 
       - name: Upload build artifact
-        uses: actions/upload-artifact@v3  # Change from the hash to @v3
+        uses: actions/upload-artifact@b4b15b8c7c6ac21ea08fcf65892d2ee8f75cf882  
         with:
           name: nextjs-build
           path: |
@@ -84,17 +84,17 @@ jobs:
     runs-on: ${{ inputs.deploy-runner }}
     steps:
       - name: Download build artifact
-        uses: actions/download-artifact@v3  # Change from the hash to @v3
+        uses: actions/download-artifact@65a9edc5881444af0b9093a5e628f2fe47ea3b2e  
         with:
           name: nextjs-build
       
       - name: Configure AWS Credentials
         if: ${{ !env.ACT }} 
-        uses: aws-actions/configure-aws-credentials@v2
+        uses: aws-actions/configure-aws-credentials@61815dcd50bd041e203e49132bacad1fd04d2708
         with:
           role-to-assume: ${{ secrets.aws-role-arn }}
           aws-region: ${{ inputs.aws-region }}
-          
+
       - name: Deploy
         run: |
           if [ "$ACT" = "true" ]; then
