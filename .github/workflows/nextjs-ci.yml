@@ -23,8 +23,12 @@ on:
         type: string
         default: 'self-hosted'
     secrets:
-      aws-role-arn:
+       aws-role-arn:
         required: true
+       aws-access-key-id:
+        required: false
+       aws-secret-access-key:
+        required: false
 
 permissions:
   contents: read
@@ -85,14 +89,22 @@ jobs:
           name: nextjs-build
       
       - name: Configure AWS Credentials
-        uses: aws-actions/configure-aws-credentials@61815dcd50bd041e203e49132bacad1fd04d2708
+        if: ${{ !env.ACT }} 
+        uses: aws-actions/configure-aws-credentials@v2
         with:
           role-to-assume: ${{ secrets.aws-role-arn }}
           aws-region: ${{ inputs.aws-region }}
-
+          
       - name: Deploy
         run: |
-          echo "🚀 Deploying to ${{ inputs.deploy-runner }}..."
-          # Add your actual deployment commands here
-          # e.g., pm2 restart ecosystem.config.js
-          ls -la
+          if [ "$ACT" = "true" ]; then
+            echo "🛠️ Local Test Detected (ACT)"
+            echo "🚀 SKIPPING AWS OIDC Auth (Only works on GitHub servers)"
+            echo "📦 Artifacts are present, simulating deployment..."
+            ls -la
+          else
+            echo "🌐 Running on GitHub - Executing Real OIDC Deploy..."
+            # Add your real deployment commands here
+            # e.g., aws s3 sync . s3://my-bucket
+            ls -la
+          fi
