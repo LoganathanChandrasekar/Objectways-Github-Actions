@@ -1,9 +1,0 @@
-name: Print Hello Dev
-description: Simple reusable action to print hello dev
-
-runs:
-  using: composite
-  steps:
-    - name: Print message
-      run: echo "hello dev"
-      shell: bash

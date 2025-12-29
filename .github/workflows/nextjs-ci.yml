@@ -1,0 +1,94 @@
+name: Reusable Next.js CI/CD
+
+on:
+  workflow_call:
+    inputs:
+      node-version:
+        required: false
+        type: string
+        default: '20'
+      pnpm-version:
+        required: false
+        type: string
+        default: '9'
+      working-directory:
+        required: false
+        type: string
+        default: '.'
+      aws-region:
+        required: true
+        type: string
+      deploy-runner:
+        required: false
+        type: string
+        default: 'self-hosted'
+    secrets:
+      aws-role-arn:
+        required: true
+
+permissions:
+  contents: read
+  id-token: write
+
+jobs:
+  build-test:
+    runs-on: ubuntu-latest 
+    steps:
+      - uses: actions/checkout@8e8c483db84b4bee98b60c0593521ed34d9990e8
+
+      - name: Setup Node
+        uses: actions/setup-node@395ad3262231945c25e8478fd5baf05154b1d79f
+        with:
+          node-version: ${{ inputs.node-version }}
+          cache: 'pnpm'
+
+      - name: Setup pnpm
+        uses: pnpm/action-setup@41ff72655975bd51cab0327fa583b6e92b6d3061
+        with:
+          version: ${{ inputs.pnpm-version }}
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+        working-directory: ${{ inputs.working-directory }}
+
+      - name: Lint
+        run: pnpm lint
+        working-directory: ${{ inputs.working-directory }}
+
+      - name: Test
+        run: pnpm test --if-present
+        working-directory: ${{ inputs.working-directory }}
+
+      - name: Build
+        run: pnpm build
+        working-directory: ${{ inputs.working-directory }}
+
+      - name: Upload build artifact
+        uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f
+        with:
+          name: nextjs-build
+          path: |
+            ${{ inputs.working-directory }}/.next
+            ${{ inputs.working-directory }}/public
+
+  deploy:
+    needs: build-test
+    runs-on: ${{ inputs.deploy-runner }}
+    steps:
+      - name: Download build artifact
+        uses: actions/download-artifact@37930b1c2abaa49bbe596cd826c3c89aef350131
+        with:
+          name: nextjs-build
+      
+      - name: Configure AWS Credentials
+        uses: aws-actions/configure-aws-credentials@61815dcd50bd041e203e49132bacad1fd04d2708
+        with:
+          role-to-assume: ${{ secrets.aws-role-arn }}
+          aws-region: ${{ inputs.aws-region }}
+
+      - name: Deploy
+        run: |
+          echo "🚀 Deploying to ${{ inputs.deploy-runner }}..."
+          # Add your actual deployment commands here
+          # e.g., pm2 restart ecosystem.config.js
+          ls -la
