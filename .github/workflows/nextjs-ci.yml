@@ -51,7 +51,16 @@ jobs:
         with:
           version: ${{ inputs.pnpm-version }}
 
-      # STEP 2: Now Setup Node (pnpm is now available for the cache to work)
+      # STEP 2: Restore cache for Next.js (Speed Optimization)
+      - name: Restore Next.js Cache
+        uses: actions/cache@a7833574556fa59680c1b7cb190c1735db73ebf0
+        with:
+          path: ${{ inputs.working-directory }}/.next/cache
+          key: ${{ runner.os }}-nextjs-${{ hashFiles('**/pnpm-lock.yaml') }}-${{ hashFiles('**/*.[jt]s', '**/*.[jt]sx') }}
+          restore-keys: |
+            ${{ runner.os }}-nextjs-${{ hashFiles('**/pnpm-lock.yaml') }}-
+
+      # STEP 3: Now Setup Node (pnpm is now available for the cache to work)
       - name: Setup Node
         uses: actions/setup-node@395ad3262231945c25e8478fd5baf05154b1d79f
         with:
@@ -98,13 +107,23 @@ jobs:
           cp -r .next/static/* .next/standalone/.next/static/
         working-directory: ${{ inputs.working-directory }}
 
+      - name: Generate Build Summary
+        run: |
+          echo "### Build Summary" >> $GITHUB_STEP_SUMMARY
+          echo "| Metric | Value |" >> $GITHUB_STEP_SUMMARY
+          echo "|---|---|" >> $GITHUB_STEP_SUMMARY
+          echo "| Node Version | $(node -v) |" >> $GITHUB_STEP_SUMMARY
+          echo "| Artifact Size | $(du -sh .next/standalone | cut -f1) |" >> $GITHUB_STEP_SUMMARY
+          echo "Build Successful" >> $GITHUB_STEP_SUMMARY
+        working-directory: ${{ inputs.working-directory }}
+
       - name: Upload build artifact
         uses: actions/upload-artifact@b4b15b8c7c6ac21ea08fcf65892d2ee8f75cf882  
         with:
           name: nextjs-build
           path: ${{ inputs.working-directory }}/.next/standalone
 
-      - name: Upload Debug Logs (On Failure)
+      - name: Upload Debug Logs & Diagnostics (On Failure)
         if: failure() || inputs.debug_enabled
         uses: actions/upload-artifact@b4b15b8c7c6ac21ea08fcf65892d2ee8f75cf882
         with:
@@ -112,6 +131,11 @@ jobs:
           path: |
             ${{ inputs.working-directory }}/pnpm-debug.log
             ${{ inputs.working-directory }}/npm-debug.log
+
+      - name: Print File Structure (On Failure)
+        if: failure()
+        run: ls -R
+        working-directory: ${{ inputs.working-directory }}
 
   deploy:
     needs: build-test
