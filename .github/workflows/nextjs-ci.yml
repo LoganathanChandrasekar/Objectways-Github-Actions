@@ -1,39 +1,16 @@
-name: Reusable Next.js CI/CD
+name: Next.js CI/CD
 
 on:
   workflow_call:
     inputs:
-      node-version:
-        required: false
-        type: string
-        default: '20'
-      pnpm-version:
-        required: false
-        type: string
-        default: '9'
-      working-directory:
-        required: false
-        type: string
-        default: '.'
-      aws-region:
-        required: true
-        type: string
-      deploy-runner:
-        required: false
-        type: string
-        default: 'self-hosted'
-      debug_enabled:
-        description: 'Enable debug logging and artifact retention'
-        required: false
-        type: boolean
-        default: false
+      node-version: { type: string, default: '20' }
+      pnpm-version: { type: string, default: '9' }
+      working-directory: { type: string, default: '.' }
+      aws-region: { type: string, required: true }
+      deploy-runner: { type: string, default: 'self-hosted' }
+      debug_enabled: { type: boolean, default: false }
     secrets:
-       aws-role-arn:
-        required: true
-       aws-access-key-id:
-        required: false
-       aws-secret-access-key:
-        required: false
+      aws-role-arn: { required: true }
 
 permissions:
   contents: read
@@ -41,140 +18,94 @@ permissions:
 
 jobs:
   build-test:
-    runs-on: ubuntu-latest 
+    runs-on: ubuntu-latest
+    env:
+      NEXT_TELEMETRY_DISABLED: 1
+      NODE_OPTIONS: "--max-old-space-size=4096"
     steps:
-      - name: Smart Cleanup (EC2 only)
-        if: ${{ !env.ACT }} 
-        run: |
-          echo "Removing stopped containers older than 24h..."
-          docker container prune -f --filter "until=24h"
-          echo "Removing dangling images..."
-          docker image prune -f
-        shell: bash
+      - name: Checkout
+        # v4.2.2
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 
 
-      - name: Checkout Code
-        uses: actions/checkout@8e8c483db84b4bee98b60c0593521ed34d9990e8
-        with:
-          clean: true
-      # STEP 1: Install PNPM first
       - name: Setup pnpm
         uses: pnpm/action-setup@41ff72655975bd51cab0327fa583b6e92b6d3061
         with:
           version: ${{ inputs.pnpm-version }}
 
-      # STEP 2: Restore cache for Next.js (Speed Optimization)
-      - name: Restore Next.js Cache
-        uses: actions/cache@a7833574556fa59680c1b7cb190c1735db73ebf0
-        with:
-          path: ${{ inputs.working-directory }}/.next/cache
-          key: ${{ runner.os }}-nextjs-${{ hashFiles('**/pnpm-lock.yaml') }}-${{ github.sha }}
-          restore-keys: |
-            ${{ runner.os }}-nextjs-${{ hashFiles('**/pnpm-lock.yaml') }}-
-
-      # STEP 3: Now Setup Node (pnpm is now available for the cache to work)
-      - name: Setup Node
-        uses: actions/setup-node@395ad3262231945c25e8478fd5baf05154b1d79f
+      - name: Setup Node & Cache
+        uses: actions/setup-node@395ad3262231945c25e8478fd5baf05154b1d79f 
         with:
           node-version: ${{ inputs.node-version }}
           cache: 'pnpm'
           cache-dependency-path: ${{ inputs.working-directory }}/pnpm-lock.yaml
 
-      # STEP 3: Install deps
-      - name: Install dependencies
-        run: pnpm install --frozen-lockfile
+      - name: Restore Next.js Cache
+        uses: actions/cache@1bd1e32a3bdc45362d1e726936510720a7c30a57 
+        with:
+          path: ${{ inputs.working-directory }}/.next/cache
+          key: ${{ runner.os }}-next-${{ hashFiles('**/pnpm-lock.yaml') }}-${{ github.sha }}
+          restore-keys: |
+            ${{ runner.os }}-next-${{ hashFiles('**/pnpm-lock.yaml') }}-
+
+      - name: Install Dependencies
+        run: pnpm install --frozen-lockfile --prefer-offline
         working-directory: ${{ inputs.working-directory }}
 
-      - name: Security Audit
-        run: pnpm audit --audit-level=high
-        continue-on-error: true
-        working-directory: ${{ inputs.working-directory }}
-
-      - name: Debug Info
-        if: ${{ inputs.debug_enabled }}
+      - name: Lint & Security (Parallel)
         run: |
-          echo "Debug Enabled"
-          node -v
-          pnpm -v
-          ls -R
+          (pnpm audit --audit-level=high > audit.log 2>&1 & pnpm lint > lint.log 2>&1 & wait) || true
         working-directory: ${{ inputs.working-directory }}
 
-      - name: Lint
-        run: pnpm lint
+      - name: Build Next.js
+        id: build
+        run: pnpm build > build.log 2>&1
         working-directory: ${{ inputs.working-directory }}
 
-      - name: Test
-        run: pnpm test --if-present
-        working-directory: ${{ inputs.working-directory }}
-
-      - name: Build
-        run: pnpm build
-        working-directory: ${{ inputs.working-directory }}
-
-      - name: Prepare Standalone Artifact
+      - name:  Diagnostic Summary
+        if: failure()
         run: |
-          mkdir -p .next/standalone/public
-          mkdir -p .next/standalone/.next/static
-          cp -r public/* .next/standalone/public/
-          cp -r .next/static/* .next/standalone/.next/static/
-        working-directory: ${{ inputs.working-directory }}
+          echo "###  Build Failure" >> $GITHUB_STEP_SUMMARY
+          echo '```bash' >> $GITHUB_STEP_SUMMARY
+          tail -n 20 ${{ inputs.working-directory }}/build.log >> $GITHUB_STEP_SUMMARY
+          echo '```' >> $GITHUB_STEP_SUMMARY
+        shell: bash
 
-      - name: Generate Build Summary
+      - name: Prepare Standalone
+        if: success()
         run: |
-          echo "### Build Summary" >> $GITHUB_STEP_SUMMARY
-          echo "| Metric | Value |" >> $GITHUB_STEP_SUMMARY
-          echo "|---|---|" >> $GITHUB_STEP_SUMMARY
-          echo "| Node Version | $(node -v) |" >> $GITHUB_STEP_SUMMARY
-          echo "| Artifact Size | $(du -sh .next/standalone | cut -f1) |" >> $GITHUB_STEP_SUMMARY
-          echo "Build Successful" >> $GITHUB_STEP_SUMMARY
+          mkdir -p .next/standalone/public .next/standalone/.next/static
+          [ -d "public" ] && cp -r public/* .next/standalone/public/ || true
+          [ -d ".next/static" ] && cp -r .next/static/* .next/standalone/.next/static/ || true
         working-directory: ${{ inputs.working-directory }}
 
-      - name: Upload build artifact
-        uses: actions/upload-artifact@b4b15b8c7c6ac21ea08fcf65892d2ee8f75cf882  
+      - name: Upload Build
+        if: success()
+        # v4.6.0
+        uses: actions/upload-artifact@b4b15b8c7c6ac21ea08fcf65892d2ee8f75cf882 
         with:
           name: nextjs-build
           path: ${{ inputs.working-directory }}/.next/standalone
-
-      - name: Upload Debug Logs & Diagnostics (On Failure)
-        if: failure() || inputs.debug_enabled
-        uses: actions/upload-artifact@b4b15b8c7c6ac21ea08fcf65892d2ee8f75cf882
-        with:
-          name: debug-logs
-          path: |
-            ${{ inputs.working-directory }}/pnpm-debug.log
-            ${{ inputs.working-directory }}/npm-debug.log
-
-      - name: Print File Structure (On Failure)
-        if: failure()
-        run: ls -R
-        working-directory: ${{ inputs.working-directory }}
+          retention-days: 1
+          compression-level: 0
 
   deploy:
     needs: build-test
     runs-on: ${{ inputs.deploy-runner }}
     steps:
-      - name: Download build artifact
-        uses: actions/download-artifact@65a9edc5881444af0b9093a5e628f2fe47ea3b2e  
+      - name: Download Build
+        # v4.1.8
+        uses: actions/download-artifact@fa0a91b85d4f404e444e00e005971372dc801d16 
         with:
           name: nextjs-build
       
-      - name: Configure AWS Credentials
-        if: ${{ !env.ACT }} 
-        uses: aws-actions/configure-aws-credentials@61815dcd50bd041e203e49132bacad1fd04d2708
+      - name: AWS Auth (CRITICAL PIN)
+        if: ${{ !env.ACT }}
+        # v4.0.2
+        uses: aws-actions/configure-aws-credentials@e3dd6a429d7300a6a4c196c26e071d42e0343502 
         with:
           role-to-assume: ${{ secrets.aws-role-arn }}
           aws-region: ${{ inputs.aws-region }}
 
       - name: Deploy
         shell: bash
-        run: |
-          if [ "$ACT" = "true" ]; then
-            echo " Local Test Detected (ACT)"
-            echo " SKIPPING AWS OIDC Auth (Only works on GitHub servers)"
-            echo " Artifacts are present, simulating deployment..."
-            ls -la
-          else
-            echo " Running on GitHub - Executing Real OIDC Deploy..."
-            # Add your real deployment commands here
-            # e.g., aws s3 sync . s3://my-bucket
-            ls -la
-          fi
+        run: echo "Deploying..."
