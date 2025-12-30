@@ -22,6 +22,11 @@ on:
         required: false
         type: string
         default: 'self-hosted'
+      debug_enabled:
+        description: 'Enable debug logging and artifact retention'
+        required: true
+        type: boolean
+        default: false
     secrets:
        aws-role-arn:
         required: true
@@ -59,6 +64,20 @@ jobs:
         run: pnpm install --frozen-lockfile
         working-directory: ${{ inputs.working-directory }}
 
+      - name: Security Audit
+        run: pnpm audit --audit-level=high
+        continue-on-error: true
+        working-directory: ${{ inputs.working-directory }}
+
+      - name: Debug Info
+        if: ${{ inputs.debug_enabled }}
+        run: |
+          echo "Debug Enabled"
+          node -v
+          pnpm -v
+          ls -R
+        working-directory: ${{ inputs.working-directory }}
+
       - name: Lint
         run: pnpm lint
         working-directory: ${{ inputs.working-directory }}
@@ -71,13 +90,28 @@ jobs:
         run: pnpm build
         working-directory: ${{ inputs.working-directory }}
 
+      - name: Prepare Standalone Artifact
+        run: |
+          mkdir -p .next/standalone/public
+          mkdir -p .next/standalone/.next/static
+          cp -r public/* .next/standalone/public/
+          cp -r .next/static/* .next/standalone/.next/static/
+        working-directory: ${{ inputs.working-directory }}
+
       - name: Upload build artifact
         uses: actions/upload-artifact@b4b15b8c7c6ac21ea08fcf65892d2ee8f75cf882  
         with:
           name: nextjs-build
+          path: ${{ inputs.working-directory }}/.next/standalone
+
+      - name: Upload Debug Logs (On Failure)
+        if: failure() || inputs.debug_enabled
+        uses: actions/upload-artifact@b4b15b8c7c6ac21ea08fcf65892d2ee8f75cf882
+        with:
+          name: debug-logs
           path: |
-            ${{ inputs.working-directory }}/.next
-            ${{ inputs.working-directory }}/public
+            ${{ inputs.working-directory }}/pnpm-debug.log
+            ${{ inputs.working-directory }}/npm-debug.log
 
   deploy:
     needs: build-test
