@@ -24,7 +24,7 @@ on:
         default: 'self-hosted'
       debug_enabled:
         description: 'Enable debug logging and artifact retention'
-        required: true
+        required: false
         type: boolean
         default: false
     secrets:
