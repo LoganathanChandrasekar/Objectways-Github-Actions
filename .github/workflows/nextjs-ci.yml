@@ -98,12 +98,12 @@ jobs:
       - name: Deploy
         run: |
           if [ "$ACT" = "true" ]; then
-            echo "🛠️ Local Test Detected (ACT)"
-            echo "🚀 SKIPPING AWS OIDC Auth (Only works on GitHub servers)"
-            echo "📦 Artifacts are present, simulating deployment..."
+            echo " Local Test Detected (ACT)"
+            echo " SKIPPING AWS OIDC Auth (Only works on GitHub servers)"
+            echo " Artifacts are present, simulating deployment..."
             ls -la
           else
-            echo "🌐 Running on GitHub - Executing Real OIDC Deploy..."
+            echo " Running on GitHub - Executing Real OIDC Deploy..."
             # Add your real deployment commands here
             # e.g., aws s3 sync . s3://my-bucket
             ls -la
