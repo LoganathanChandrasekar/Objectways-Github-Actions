@@ -43,8 +43,19 @@ jobs:
   build-test:
     runs-on: ubuntu-latest 
     steps:
-      - uses: actions/checkout@8e8c483db84b4bee98b60c0593521ed34d9990e8
+      - name: Smart Cleanup (EC2 only)
+        if: ${{ !env.ACT }} 
+        run: |
+          echo "Removing stopped containers older than 24h..."
+          docker container prune -f --filter "until=24h"
+          echo "Removing dangling images..."
+          docker image prune -f
+        shell: bash
 
+      - name: Checkout Code
+        uses: actions/checkout@8e8c483db84b4bee98b60c0593521ed34d9990e8
+        with:
+          clean: true
       # STEP 1: Install PNPM first
       - name: Setup pnpm
         uses: pnpm/action-setup@41ff72655975bd51cab0327fa583b6e92b6d3061
@@ -56,7 +67,7 @@ jobs:
         uses: actions/cache@a7833574556fa59680c1b7cb190c1735db73ebf0
         with:
           path: ${{ inputs.working-directory }}/.next/cache
-          key: ${{ runner.os }}-nextjs-${{ hashFiles('**/pnpm-lock.yaml') }}-${{ hashFiles('**/*.[jt]s', '**/*.[jt]sx') }}
+          key: ${{ runner.os }}-nextjs-${{ hashFiles('**/pnpm-lock.yaml') }}-${{ github.sha }}
           restore-keys: |
             ${{ runner.os }}-nextjs-${{ hashFiles('**/pnpm-lock.yaml') }}-
 
@@ -154,6 +165,7 @@ jobs:
           aws-region: ${{ inputs.aws-region }}
 
       - name: Deploy
+        shell: bash
         run: |
           if [ "$ACT" = "true" ]; then
             echo " Local Test Detected (ACT)"
