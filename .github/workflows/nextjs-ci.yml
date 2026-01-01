@@ -49,6 +49,20 @@ jobs:
             ${{ runner.os }}-nextjs-${{ hashFiles('**/pnpm-lock.yaml') }}-
             ${{ runner.os }}-nextjs-
 
+      - name: setup env file
+        if: ${{ !env.ACT }}
+        run: |
+          # The location of your manual .env file
+          SRC_ENV="/home/ubuntu/apps/bcm-frontend/.env"
+          
+          if [ -f "$SRC_ENV" ]; then
+            cp "$SRC_ENV" .env
+            echo " Successfully copied .env to build workspace"
+          else
+            echo " ERROR: .env not found at $SRC_ENV"
+            exit 1
+          fi
+
       - name: Install Dependencies
         run: pnpm install --prefer-offline
         working-directory: ${{ inputs.working-directory }}
