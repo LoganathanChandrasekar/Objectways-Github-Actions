@@ -122,19 +122,28 @@ jobs:
           cd deploy-temp && tar -xzf artifact.tar.gz
           rm artifact.tar.gz
           
-      - name: Finalize Deployment (Zero-Downtime Swap)
+      - name: Finalize Deployment (Senior Dev Style)
         if: ${{ !env.ACT }}
         shell: bash
         run: |
           TARGET_DIR="/home/ubuntu/bcm-frontend"
           mkdir -p $TARGET_DIR
 
-          # Sync extracted files to target directory
+          # Sync files to target
           rsync -av --delete deploy-temp/ $TARGET_DIR/
 
-          # Restart the app
+          # 2. Deploy Logic
           cd $TARGET_DIR
-          pm2 restart bcm-frontend || pm2 start server.js --name bcm-frontend
+          
+          # Delete the old process if it exists to avoid conflicts
+          pm2 delete liceum-frontend || true
+          
+          # Run pnpm start via PM2
+          # We use --interpreter node to ensure it uses the correct engine
+          pm2 start pnpm --name "liceum-frontend" -- start
+          
+          # CRITICAL: Save the state so it restarts on EC2 reboot
+          pm2 save
           
           rm -rf ~/deploy-temp
-          echo "Elite Deployment Successful"
+          echo "Deployment Successful & Persisted via PM2"
