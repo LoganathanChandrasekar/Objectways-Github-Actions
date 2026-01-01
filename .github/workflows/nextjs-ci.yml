@@ -130,11 +130,25 @@ jobs:
           
           echo "Build files extracted and ready for PM2/Systemd"
 
-      - name: Finalize Deployment
+      - name: Finalize Deployment (Zero-Downtime Swap)
         shell: bash
         run: |
-          echo "Artifact for ${{ github.sha }} is ready on $(hostname)"
-          echo "Deployment folder: $(pwd)/deploy-temp"
-          # Example Final Steps:
-          # rsync -av deploy-temp/ /var/www/my-app/
-          # pm2 restart my-app
+          # 1. Define Paths
+          TARGET_DIR="/home/ubuntu/bcm-frontend"
+          
+          # 2. Ensure target directory exists
+          mkdir -p $TARGET_DIR
+
+          # 3. Sync extracted files to target directory
+          # --delete ensures old files from previous versions are removed
+          rsync -av --delete deploy-temp/ $TARGET_DIR/
+
+          # 4. Restart the app
+          cd $TARGET_DIR
+          # This command restarts the app if it exists, otherwise starts it new
+          pm2 restart bcm-frontend || pm2 start server.js --name bcm-frontend
+          
+          # 5. Clean up the temp folder to save disk space
+          rm -rf ~/deploy-temp
+          
+          echo "Deployment of ${{ github.sha }} is LIVE on liceum"
