@@ -136,28 +136,28 @@ jobs:
           cd deploy-temp && tar -xzf artifact.tar.gz
           rm artifact.tar.gz
           
-      - name: Finalize Deployment (Senior Dev Style)
+      - name: Finalize Deployment (Standalone Fix)
         if: ${{ !env.ACT }}
         shell: bash
         run: |
           TARGET_DIR="/home/ubuntu/bcm-frontend"
           mkdir -p $TARGET_DIR
 
-          # Sync files to target
+          # 1. Sync files
           rsync -av --delete deploy-temp/ $TARGET_DIR/
 
-          # 2. Deploy Logic
+          # 2. Restart using Node directly (Elite Standalone Practice)
           cd $TARGET_DIR
           
-          # Delete the old process if it exists to avoid conflicts
+          # Delete the old crashing process
           pm2 delete liceum-frontend || true
           
-          # Run pnpm start via PM2
-          # We use --interpreter node to ensure it uses the correct engine
-          pm2 start pnpm --name "liceum-frontend" -- start
+          # IMPORTANT: We run 'server.js' instead of 'pnpm start'
+          # We set the PORT variable here just in case you need it (default is 3000)
+          PORT=3000 pm2 start server.js --name "liceum-frontend"
           
-          # CRITICAL: Save the state so it restarts on EC2 reboot
+          # 3. Save for persistence
           pm2 save
           
           rm -rf ~/deploy-temp
-          echo "Deployment Successful & Persisted via PM2"
+          echo " Deployment Successful: Server is running on port 3000"
