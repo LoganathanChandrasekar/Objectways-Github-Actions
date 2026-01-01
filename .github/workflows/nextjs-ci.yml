@@ -18,7 +18,7 @@ permissions:
 
 jobs:
   build-test:
-    runs-on: ubuntu-latest
+    runs-on: ${{ inputs.deploy-runner }}
     env:
       NEXT_TELEMETRY_DISABLED: 1
       NODE_OPTIONS: "--max-old-space-size=4096"
@@ -50,7 +50,7 @@ jobs:
             ${{ runner.os }}-nextjs-
 
       - name: Install Dependencies
-        run: pnpm install --frozen-lockfile --prefer-offline
+        run: pnpm install --prefer-offline
         working-directory: ${{ inputs.working-directory }}
 
       - name: Lint & Security (Parallel)
@@ -106,49 +106,36 @@ jobs:
     needs: build-test
     runs-on: ${{ inputs.deploy-runner }}
     steps:
-      - name: AWS Auth
+      - name: AWS Auth (For S3 Backup Verification)
         if: ${{ !env.ACT }}
         # v4.0.2
         uses: aws-actions/configure-aws-credentials@e3dd6a429d7300a6a4c196c26e071d42e0343502 
         with:
           role-to-assume: ${{ secrets.aws-role-arn }}
           aws-region: ${{ inputs.aws-region }}
-
-      - name: Download & Extract from S3
-        if: ${{ !env.ACT }}
+      - name: Prepare Local Artifact
         run: |
-          # Clean old deployment temp files
           rm -rf deploy-temp && mkdir -p deploy-temp
-          
-          # Download zip from S3
-          aws s3 cp s3://bcm-frontend-artifacts/builds/build-${{ github.sha }}.tar.gz deploy-temp/artifact.tar.gz
-          
-          # Extract and cleanup zip
-          cd deploy-temp
-          tar -xzf artifact.tar.gz
+          # Move the tarball we just created in the previous job
+          cp build-${{ github.sha }}.tar.gz deploy-temp/artifact.tar.gz
+          cd deploy-temp && tar -xzf artifact.tar.gz
           rm artifact.tar.gz
-          
-          echo "Build files extracted and ready for PM2/Systemd"
 
       - name: Finalize Deployment (Zero-Downtime Swap)
+        if: ${{ !env.ACT }}
         shell: bash
         run: |
-          # 1. Define Paths
           TARGET_DIR="/home/ubuntu/bcm-frontend"
-          
-          # 2. Ensure target directory exists
           mkdir -p $TARGET_DIR
 
-          # 3. Sync extracted files to target directory
-          # --delete ensures old files from previous versions are removed
+          # Sync extracted files to target directory
           rsync -av --delete deploy-temp/ $TARGET_DIR/
 
-          # 4. Restart the app
+          # Restart the app
           cd $TARGET_DIR
-          # This command restarts the app if it exists, otherwise starts it new
           pm2 restart bcm-frontend || pm2 start server.js --name bcm-frontend
           
-          # 5. Clean up the temp folder to save disk space
+          # Cleanup workspace to keep EC2 disk healthy
           rm -rf ~/deploy-temp
           
-          echo "Deployment of ${{ github.sha }} is LIVE on liceum"
+          echo "Deployment Successful"
