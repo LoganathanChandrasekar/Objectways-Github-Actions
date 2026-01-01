@@ -43,9 +43,11 @@ jobs:
         uses: actions/cache@1bd1e32a3bdc45362d1e726936510720a7c30a57 
         with:
           path: ${{ inputs.working-directory }}/.next/cache
-          key: ${{ runner.os }}-next-${{ hashFiles('**/pnpm-lock.yaml') }}-${{ github.sha }}
+          # Key is based on OS, lockfile, and source code to maximize hits
+          key: ${{ runner.os }}-nextjs-${{ hashFiles('**/pnpm-lock.yaml') }}-${{ github.sha }}
           restore-keys: |
-            ${{ runner.os }}-next-${{ hashFiles('**/pnpm-lock.yaml') }}-
+            ${{ runner.os }}-nextjs-${{ hashFiles('**/pnpm-lock.yaml') }}-
+            ${{ runner.os }}-nextjs-
 
       - name: Install Dependencies
         run: pnpm install --frozen-lockfile --prefer-offline
@@ -53,7 +55,10 @@ jobs:
 
       - name: Lint & Security (Parallel)
         run: |
+          echo "Running Audit and Lint in parallel..."
           (pnpm audit --audit-level=high > audit.log 2>&1 & pnpm lint > lint.log 2>&1 & wait) || true
+          cat audit.log
+          cat lint.log
         working-directory: ${{ inputs.working-directory }}
 
       - name: Build Next.js
@@ -61,44 +66,47 @@ jobs:
         run: pnpm build > build.log 2>&1
         working-directory: ${{ inputs.working-directory }}
 
-      - name:  Diagnostic Summary
+      - name: Diagnostic Summary (On Failure)
         if: failure()
         run: |
-          echo "###  Build Failure" >> $GITHUB_STEP_SUMMARY
+          echo "### Build Failure" >> $GITHUB_STEP_SUMMARY
           echo '```bash' >> $GITHUB_STEP_SUMMARY
-          tail -n 20 ${{ inputs.working-directory }}/build.log >> $GITHUB_STEP_SUMMARY
+          tail -n 30 ${{ inputs.working-directory }}/build.log >> $GITHUB_STEP_SUMMARY
           echo '```' >> $GITHUB_STEP_SUMMARY
         shell: bash
 
-      - name: Prepare Standalone
+      - name: Prepare Standalone & Zip
         if: success()
         run: |
+          # 1. Ensure public and static files are inside standalone for a complete build
           mkdir -p .next/standalone/public .next/standalone/.next/static
           [ -d "public" ] && cp -r public/* .next/standalone/public/ || true
           [ -d ".next/static" ] && cp -r .next/static/* .next/standalone/.next/static/ || true
+          
+          # 2. Create the tarball from the standalone directory
+          cd .next/standalone
+          tar -czf ../../build-${{ github.sha }}.tar.gz .
+          echo "Artifact created: build-${{ github.sha }}.tar.gz"
         working-directory: ${{ inputs.working-directory }}
 
-      - name: Upload Build
-        if: success()
-        # v4.6.0
-        uses: actions/upload-artifact@b4b15b8c7c6ac21ea08fcf65892d2ee8f75cf882 
+      - name: AWS Auth (OIDC)
+        if: success() && !env.ACT
+        uses: aws-actions/configure-aws-credentials@e3dd6a429d7300a6a4c196c26e071d42e0343502
         with:
-          name: nextjs-build
-          path: ${{ inputs.working-directory }}/.next/standalone
-          retention-days: 1
-          compression-level: 0
+          role-to-assume: ${{ secrets.aws-role-arn }}
+          aws-region: ${{ inputs.aws-region }}
+
+      - name: Upload Artifact to S3
+        if: success() && !env.ACT
+        run: |
+          aws s3 cp build-${{ github.sha }}.tar.gz s3://bcm-frontend-artifacts/builds/
+        working-directory: ${{ inputs.working-directory }}
 
   deploy:
     needs: build-test
     runs-on: ${{ inputs.deploy-runner }}
     steps:
-      - name: Download Build
-        # v4.1.8
-        uses: actions/download-artifact@fa0a91b85d4f404e444e00e005971372dc801d16 
-        with:
-          name: nextjs-build
-      
-      - name: AWS Auth (CRITICAL PIN)
+      - name: AWS Auth
         if: ${{ !env.ACT }}
         # v4.0.2
         uses: aws-actions/configure-aws-credentials@e3dd6a429d7300a6a4c196c26e071d42e0343502 
@@ -106,6 +114,27 @@ jobs:
           role-to-assume: ${{ secrets.aws-role-arn }}
           aws-region: ${{ inputs.aws-region }}
 
-      - name: Deploy
+      - name: Download & Extract from S3
+        if: ${{ !env.ACT }}
+        run: |
+          # Clean old deployment temp files
+          rm -rf deploy-temp && mkdir -p deploy-temp
+          
+          # Download zip from S3
+          aws s3 cp s3://bcm-frontend-artifacts/builds/build-${{ github.sha }}.tar.gz deploy-temp/artifact.tar.gz
+          
+          # Extract and cleanup zip
+          cd deploy-temp
+          tar -xzf artifact.tar.gz
+          rm artifact.tar.gz
+          
+          echo "Build files extracted and ready for PM2/Systemd"
+
+      - name: Finalize Deployment
         shell: bash
-        run: echo "Deploying..."
+        run: |
+          echo "Artifact for ${{ github.sha }} is ready on $(hostname)"
+          echo "Deployment folder: $(pwd)/deploy-temp"
+          # Example Final Steps:
+          # rsync -av deploy-temp/ /var/www/my-app/
+          # pm2 restart my-app
