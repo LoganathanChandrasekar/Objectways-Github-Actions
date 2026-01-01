@@ -106,21 +106,22 @@ jobs:
     needs: build-test
     runs-on: ${{ inputs.deploy-runner }}
     steps:
-      - name: AWS Auth (For S3 Backup Verification)
+      - name: AWS Auth
         if: ${{ !env.ACT }}
         # v4.0.2
         uses: aws-actions/configure-aws-credentials@e3dd6a429d7300a6a4c196c26e071d42e0343502 
         with:
           role-to-assume: ${{ secrets.aws-role-arn }}
           aws-region: ${{ inputs.aws-region }}
-      - name: Prepare Local Artifact
+
+      - name: Download & Extract from S3
+        if: ${{ !env.ACT }}
         run: |
           rm -rf deploy-temp && mkdir -p deploy-temp
-          # Move the tarball we just created in the previous job
-          cp build-${{ github.sha }}.tar.gz deploy-temp/artifact.tar.gz
+          aws s3 cp s3://bcm-frontend-artifacts/builds/build-${{ github.sha }}.tar.gz deploy-temp/artifact.tar.gz
           cd deploy-temp && tar -xzf artifact.tar.gz
           rm artifact.tar.gz
-
+          
       - name: Finalize Deployment (Zero-Downtime Swap)
         if: ${{ !env.ACT }}
         shell: bash
@@ -135,7 +136,5 @@ jobs:
           cd $TARGET_DIR
           pm2 restart bcm-frontend || pm2 start server.js --name bcm-frontend
           
-          # Cleanup workspace to keep EC2 disk healthy
           rm -rf ~/deploy-temp
-          
-          echo "Deployment Successful"
+          echo "Elite Deployment Successful"
