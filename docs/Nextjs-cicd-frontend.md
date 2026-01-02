@@ -847,9 +847,9 @@ mv /home/ubuntu/bcm-frontend-new /home/ubuntu/bcm-frontend
 pm2 restart liceum-frontend
 ```
 
-### 8.3 Notifications
+### 8.3 Notifications (optional)
 
-**Slack Notifications on Failure:**
+**Slack Notifications on Failure:( if need slack use like below )**
 
 ```yaml
 - name: Notify Slack on Failure
@@ -886,7 +886,7 @@ pm2 restart liceum-frontend
 ### Why Path Filtering?
 If you only change a `.md` file, the build is skipped to:
 -  Save EC2 CPU cycles
-- ⏱ Reduce deployment time
+-  Reduce deployment time
 -  Conserve runner resources
 
 ### Why S3 Artifact Storage?
@@ -905,5 +905,6 @@ Storing builds in S3 enables:
 ---
 **Standardized by:** DevOps Engineering Team  
 **Author:** Loganathan Chandrasekar
+
 **Version:** 2.0 (Elite Edition)  
 **Last Audit:** Jan 2026
