@@ -9,6 +9,10 @@ on:
       aws-region: { type: string, required: true }
       deploy-runner: { type: string, default: 'self-hosted' }
       debug_enabled: { type: boolean, default: false }
+      s3-bucket: { type: string, required: true }
+      pm2-name: { type: string, required: true }
+      deploy-path: { type: string, required: true }
+      env-source-path: { type: string, required: true }
     secrets:
       aws-role-arn: { required: true }
 
@@ -52,14 +56,11 @@ jobs:
       - name: setup env file
         if: ${{ !env.ACT }}
         run: |
-          # The location of your manual .env file
-          SRC_ENV="/home/ubuntu/apps/bcm-frontend/.env"
-          
-          if [ -f "$SRC_ENV" ]; then
-            cp "$SRC_ENV" .env
-            echo " Successfully copied .env to build workspace"
+          if [ -f "${{ inputs.env-source-path }}" ]; then
+            cp "${{ inputs.env-source-path }}" .env
+            echo " Successfully copied .env from ${{ inputs.env-source-path }}"
           else
-            echo " ERROR: .env not found at $SRC_ENV"
+            echo " ERROR: .env not found at ${{ inputs.env-source-path }}"
             exit 1
           fi
 
@@ -113,7 +114,7 @@ jobs:
       - name: Upload Artifact to S3
         if: success() && !env.ACT
         run: |
-          aws s3 cp build-${{ github.sha }}.tar.gz s3://bcm-frontend-artifacts/builds/
+          aws s3 cp build-${{ github.sha }}.tar.gz s3://${{ inputs.s3-bucket }}/builds/
         working-directory: ${{ inputs.working-directory }}
 
   deploy:
@@ -132,7 +133,7 @@ jobs:
         if: ${{ !env.ACT }}
         run: |
           rm -rf deploy-temp && mkdir -p deploy-temp
-          aws s3 cp s3://bcm-frontend-artifacts/builds/build-${{ github.sha }}.tar.gz deploy-temp/artifact.tar.gz
+          aws s3 cp s3://${{ inputs.s3-bucket }}/builds/build-${{ github.sha }}.tar.gz deploy-temp/artifact.tar.gz
           cd deploy-temp && tar -xzf artifact.tar.gz
           rm artifact.tar.gz
           
@@ -140,7 +141,7 @@ jobs:
         if: ${{ !env.ACT }}
         shell: bash
         run: |
-          TARGET_DIR="/home/ubuntu/bcm-frontend"
+          TARGET_DIR="${{ inputs.deploy-path }}"
           mkdir -p $TARGET_DIR
 
           # 1. Sync files
@@ -150,14 +151,14 @@ jobs:
           cd $TARGET_DIR
           
           # Delete the old crashing process
-          pm2 delete liceum-frontend || true
+          pm2 delete ${{ inputs.pm2-name }} || true
           
           # IMPORTANT: We run 'server.js' instead of 'pnpm start'
           # We set the PORT variable here just in case you need it (default is 3000)
-          PORT=3000 pm2 start server.js --name "liceum-frontend"
+          PORT=3000 pm2 start server.js --name "${{ inputs.pm2-name }}"
           
           # 3. Save for persistence
           pm2 save
           
           rm -rf ~/deploy-temp
-          echo " Deployment Successful: Server is running on port 3000"
+          echo " Deployment Successful: ${{ inputs.pm2-name }} is live"
