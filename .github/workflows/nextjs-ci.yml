@@ -144,7 +144,7 @@ jobs:
           mkdir -p $TARGET_DIR
 
           # 1. Sync files
-          rsync -av --delete deploy-temp/ $TARGET_DIR/
+          rsync -a --delete deploy-temp/ $TARGET_DIR/
 
           # 2. Restart using Node directly (Elite Standalone Practice)
           cd $TARGET_DIR
