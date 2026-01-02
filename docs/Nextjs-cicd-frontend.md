@@ -849,7 +849,7 @@ pm2 restart liceum-frontend
 
 ### 8.3 Notifications (optional)
 
-**Slack Notifications on Failure:( if need slack use like below )**
+**Slack Notifications on Failure:( if need slack use like below way )**
 
 ```yaml
 - name: Notify Slack on Failure
