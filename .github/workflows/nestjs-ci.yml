@@ -1,0 +1,168 @@
+name: NestJS CI/CD
+
+on:
+  workflow_call:
+    inputs:
+      node-version: { type: string, default: '20' }
+      pnpm-version: { type: string, default: '9' }
+      working-directory: { type: string, default: '.' }
+      aws-region: { type: string, required: true }
+      deploy-runner: { type: string, default: 'self-hosted' }
+      debug_enabled: { type: boolean, default: false }
+      s3-bucket: { type: string, required: true }
+      pm2-name: { type: string, required: true }
+      deploy-path: { type: string, required: true }
+      env-source-path: { type: string, required: true }
+    secrets:
+      aws-role-arn: { required: true }
+
+permissions:
+  contents: read
+  id-token: write
+
+jobs:
+  build-test:
+    runs-on: ${{ inputs.deploy-runner }}
+    env:
+      NODE_ENV: production
+      NODE_OPTIONS: "--max-old-space-size=4096"
+    steps:
+      - name: Checkout
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 
+
+      - name: Setup pnpm
+        uses: pnpm/action-setup@41ff72655975bd51cab0327fa583b6e92b6d3061
+        with:
+          version: ${{ inputs.pnpm-version }}
+
+      - name: Setup Node & Cache
+        uses: actions/setup-node@395ad3262231945c25e8478fd5baf05154b1d79f 
+        with:
+          node-version: ${{ inputs.node-version }}
+          cache: 'pnpm'
+          cache-dependency-path: ${{ inputs.working-directory }}/pnpm-lock.yaml
+
+      - name: Restore NestJS Build Cache
+        uses: actions/cache@1bd1e32a3bdc45362d1e726936510720a7c30a57 
+        with:
+          path: ${{ inputs.working-directory }}/dist
+          # Key is based on OS, lockfile, and source code to maximize hits
+          key: ${{ runner.os }}-nestjs-${{ hashFiles('**/pnpm-lock.yaml') }}-${{ github.sha }}
+          restore-keys: |
+            ${{ runner.os }}-nestjs-${{ hashFiles('**/pnpm-lock.yaml') }}-
+            ${{ runner.os }}-nestjs-
+
+      - name: setup env file
+        if: ${{ !env.ACT }}
+        run: |
+          if [ -f "${{ inputs.env-source-path }}" ]; then
+            cp "${{ inputs.env-source-path }}" .env
+            echo " Successfully copied .env from ${{ inputs.env-source-path }}"
+          else
+            echo " ERROR: .env not found at ${{ inputs.env-source-path }}"
+            exit 1
+          fi
+
+      - name: Install Dependencies
+        run: pnpm install --prefer-offline
+        working-directory: ${{ inputs.working-directory }}
+
+      - name: Generate Prisma Client
+        run: pnpm prisma:generate
+        working-directory: ${{ inputs.working-directory }}
+
+      - name: Lint & Security (Parallel)
+        run: |
+          echo "Running Audit and Lint in parallel..."
+          (pnpm audit --audit-level=high > audit.log 2>&1 & pnpm lint > lint.log 2>&1 & wait) || true
+          cat audit.log
+          cat lint.log
+        working-directory: ${{ inputs.working-directory }}
+
+      - name: Build NestJS
+        id: build
+        run: pnpm build > build.log 2>&1
+        working-directory: ${{ inputs.working-directory }}
+
+      - name: Diagnostic Summary (On Failure)
+        if: failure()
+        run: |
+          echo "### Build Failure" >> $GITHUB_STEP_SUMMARY
+          echo '```bash' >> $GITHUB_STEP_SUMMARY
+          tail -n 30 ${{ inputs.working-directory }}/build.log >> $GITHUB_STEP_SUMMARY
+          echo '```' >> $GITHUB_STEP_SUMMARY
+        shell: bash
+
+      - name: Prepare Build Artifact & Zip
+        if: success()
+        run: |
+          # 1. Create deployment package with dist, node_modules, and package.json
+          mkdir -p deploy-package
+          cp -r dist deploy-package/
+          cp -r node_modules deploy-package/
+          cp package.json deploy-package/
+          
+          # 2. Create the tarball from the deployment package
+          cd deploy-package
+          tar -czf ../build-${{ github.sha }}.tar.gz .
+          echo "Artifact created: build-${{ github.sha }}.tar.gz"
+        working-directory: ${{ inputs.working-directory }}
+
+      - name: AWS Auth (OIDC)
+        if: success() && !env.ACT
+        uses: aws-actions/configure-aws-credentials@e3dd6a429d7300a6a4c196c26e071d42e0343502
+        with:
+          role-to-assume: ${{ secrets.aws-role-arn }}
+          aws-region: ${{ inputs.aws-region }}
+
+      - name: Upload Artifact to S3
+        if: success() && !env.ACT
+        run: |
+          aws s3 cp build-${{ github.sha }}.tar.gz s3://${{ inputs.s3-bucket }}/builds/
+        working-directory: ${{ inputs.working-directory }}
+
+  deploy:
+    needs: build-test
+    runs-on: ${{ inputs.deploy-runner }}
+    steps:
+      - name: AWS Auth
+        if: ${{ !env.ACT }}
+        # v4.0.2
+        uses: aws-actions/configure-aws-credentials@e3dd6a429d7300a6a4c196c26e071d42e0343502 
+        with:
+          role-to-assume: ${{ secrets.aws-role-arn }}
+          aws-region: ${{ inputs.aws-region }}
+
+      - name: Download & Extract from S3
+        if: ${{ !env.ACT }}
+        run: |
+          rm -rf deploy-temp && mkdir -p deploy-temp
+          aws s3 cp s3://${{ inputs.s3-bucket }}/builds/build-${{ github.sha }}.tar.gz deploy-temp/artifact.tar.gz
+          cd deploy-temp && tar -xzf artifact.tar.gz
+          rm artifact.tar.gz
+          
+      - name: Finalize Deployment (NestJS)
+        if: ${{ !env.ACT }}
+        shell: bash
+        run: |
+          TARGET_DIR="${{ inputs.deploy-path }}"
+          mkdir -p $TARGET_DIR
+
+          # 1. Sync files
+          rsync -a --delete deploy-temp/ $TARGET_DIR/
+
+          # 2. Restart NestJS application with PM2
+          cd $TARGET_DIR
+          
+          # Delete the old process
+          pm2 delete ${{ inputs.pm2-name }} || true
+          
+          # Start NestJS application (main.js is the entry point after build)
+          # Set PORT variable if needed (default is usually 3000 or from .env)
+          PORT=3000 pm2 start dist/main.js --name "${{ inputs.pm2-name }}"
+          
+          # 3. Save for persistence
+          pm2 save
+          
+          rm -rf ~/deploy-temp
+          echo " Deployment Successful: ${{ inputs.pm2-name }} is live"
