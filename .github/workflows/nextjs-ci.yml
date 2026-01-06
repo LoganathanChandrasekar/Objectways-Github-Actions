@@ -1,4 +1,4 @@
-name: NestJS CI/CD
+name: Next.js CI/CD
 
 on:
   workflow_call:
@@ -24,7 +24,7 @@ jobs:
   build-test:
     runs-on: ${{ inputs.deploy-runner }}
     env:
-      NODE_ENV: production
+      NEXT_TELEMETRY_DISABLED: 1
       NODE_OPTIONS: "--max-old-space-size=4096"
     steps:
       - name: Checkout
@@ -43,15 +43,15 @@ jobs:
           cache: 'pnpm'
           cache-dependency-path: ${{ inputs.working-directory }}/pnpm-lock.yaml
 
-      - name: Restore NestJS Build Cache
+      - name: Restore Next.js Cache
         uses: actions/cache@1bd1e32a3bdc45362d1e726936510720a7c30a57 
         with:
-          path: ${{ inputs.working-directory }}/dist
+          path: ${{ inputs.working-directory }}/.next/cache
           # Key is based on OS, lockfile, and source code to maximize hits
-          key: ${{ runner.os }}-nestjs-${{ hashFiles('**/pnpm-lock.yaml') }}-${{ github.sha }}
+          key: ${{ runner.os }}-nextjs-${{ hashFiles('**/pnpm-lock.yaml') }}-${{ github.sha }}
           restore-keys: |
-            ${{ runner.os }}-nestjs-${{ hashFiles('**/pnpm-lock.yaml') }}-
-            ${{ runner.os }}-nestjs-
+            ${{ runner.os }}-nextjs-${{ hashFiles('**/pnpm-lock.yaml') }}-
+            ${{ runner.os }}-nextjs-
 
       - name: setup env file
         if: ${{ !env.ACT }}
@@ -68,10 +68,6 @@ jobs:
         run: pnpm install --prefer-offline
         working-directory: ${{ inputs.working-directory }}
 
-      - name: Generate Prisma Client
-        run: pnpm prisma:generate
-        working-directory: ${{ inputs.working-directory }}
-
       - name: Lint & Security (Parallel)
         run: |
           echo "Running Audit and Lint in parallel..."
@@ -80,7 +76,7 @@ jobs:
           cat lint.log
         working-directory: ${{ inputs.working-directory }}
 
-      - name: Build NestJS
+      - name: Build Next.js
         id: build
         run: pnpm build > build.log 2>&1
         working-directory: ${{ inputs.working-directory }}
@@ -94,18 +90,17 @@ jobs:
           echo '```' >> $GITHUB_STEP_SUMMARY
         shell: bash
 
-      - name: Prepare Build Artifact & Zip
+      - name: Prepare Standalone & Zip
         if: success()
         run: |
-          # 1. Create deployment package with dist, node_modules, and package.json
-          mkdir -p deploy-package
-          cp -r dist deploy-package/
-          cp -r node_modules deploy-package/
-          cp package.json deploy-package/
+          # 1. Ensure public and static files are inside standalone for a complete build
+          mkdir -p .next/standalone/public .next/standalone/.next/static
+          [ -d "public" ] && cp -r public/* .next/standalone/public/ || true
+          [ -d ".next/static" ] && cp -r .next/static/* .next/standalone/.next/static/ || true
           
-          # 2. Create the tarball from the deployment package
-          cd deploy-package
-          tar -czf ../build-${{ github.sha }}.tar.gz .
+          # 2. Create the tarball from the standalone directory
+          cd .next/standalone
+          tar -czf ../../build-${{ github.sha }}.tar.gz .
           echo "Artifact created: build-${{ github.sha }}.tar.gz"
         working-directory: ${{ inputs.working-directory }}
 
@@ -142,7 +137,7 @@ jobs:
           cd deploy-temp && tar -xzf artifact.tar.gz
           rm artifact.tar.gz
           
-      - name: Finalize Deployment (NestJS)
+      - name: Finalize Deployment (Standalone Fix)
         if: ${{ !env.ACT }}
         shell: bash
         run: |
@@ -152,15 +147,15 @@ jobs:
           # 1. Sync files
           rsync -a --delete deploy-temp/ $TARGET_DIR/
 
-          # 2. Restart NestJS application with PM2
+          # 2. Restart using Node directly (Elite Standalone Practice)
           cd $TARGET_DIR
           
-          # Delete the old process
+          # Delete the old crashing process
           pm2 delete ${{ inputs.pm2-name }} || true
           
-          # Start NestJS application (main.js is the entry point after build)
-          # Set PORT variable if needed (default is usually 3000 or from .env)
-          PORT=3000 pm2 start dist/main.js --name "${{ inputs.pm2-name }}"
+          # IMPORTANT: We run 'server.js' instead of 'pnpm start'
+          # We set the PORT variable here just in case you need it (default is 3000)
+          PORT=3000 pm2 start server.js --name "${{ inputs.pm2-name }}"
           
           # 3. Save for persistence
           pm2 save
