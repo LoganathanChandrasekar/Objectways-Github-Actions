@@ -159,18 +159,33 @@ jobs:
         if: ${{ !env.ACT }}
         shell: bash
         run: |
-          TARGET_DIR="${{ vars.DEPLOYMENT_PATH }}"
-          WORKSPACE_DIR=$GITHUB_WORKSPACE
-          mkdir -p $TARGET_DIR
+          # 1. CLEAN the paths to remove hidden newlines
+          CLEAN_TARGET=$(echo "${{ vars.DEPLOYMENT_PATH }}" | tr -d '\r\n' | xargs)
+          CLEAN_ENV_SOURCE=$(echo "${{ vars.ENV_FILE_SOURCE }}" | tr -d '\r\n' | xargs)
+          CLEAN_PM2_NAME=$(echo "${{ vars.PM2_APP_NAME }}" | tr -d '\r\n' | xargs)
 
-          rsync -a --delete deploy-temp/ $TARGET_DIR/
-          cp "${{ vars.ENV_FILE_SOURCE }}" "$TARGET_DIR/.env"
+          # 2. SAFETY CHECK: Prevent accidental root sync
+          if [ -z "$CLEAN_TARGET" ] || [ "$CLEAN_TARGET" == "/" ]; then
+            echo " ERROR: TARGET_DIR is empty or root! Stopping to prevent server damage."
+            exit 1
+          fi
 
-          cd $TARGET_DIR
-          pm2 delete ${{ vars.PM2_APP_NAME }} || true
-          PORT=3000 pm2 start server.js --name "${{ vars.PM2_APP_NAME }}"
+          echo " Deploying to: $CLEAN_TARGET"
+          mkdir -p "$CLEAN_TARGET"
+
+          # 3. Sync files safely (Using absolute paths and quotes)
+          rsync -a --delete deploy-temp/ "$CLEAN_TARGET/"
+
+          # 4. Restore .env
+          cp "$CLEAN_ENV_SOURCE" "$CLEAN_TARGET/.env"
+
+          # 5. Restart PM2
+          cd "$CLEAN_TARGET"
+          pm2 delete "$CLEAN_PM2_NAME" || true
+          PORT=3000 pm2 start server.js --name "$CLEAN_PM2_NAME"
           pm2 save
           
-          cd $WORKSPACE_DIR
+          # 6. Cleanup
+          cd $GITHUB_WORKSPACE
           rm -rf deploy-temp
-          echo "Deployment Successful: ${{ vars.PM2_APP_NAME }} is live"
+          echo " Deployment Successful: $CLEAN_PM2_NAME is live"
