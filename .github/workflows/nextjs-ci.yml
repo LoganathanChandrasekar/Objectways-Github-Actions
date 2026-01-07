@@ -13,6 +13,7 @@ on:
       pm2-name: { type: string, required: true }
       deploy-path: { type: string, required: true }
       env-source-path: { type: string, required: true }
+      environment-name: { type: string, required: true }
     secrets:
       aws-role-arn: { required: true }
 
@@ -23,6 +24,7 @@ permissions:
 jobs:
   build-test:
     runs-on: ${{ inputs.deploy-runner }}
+    environment: ${{ inputs.environment-name }}
     env:
       NEXT_TELEMETRY_DISABLED: 1
       NODE_OPTIONS: "--max-old-space-size=4096"
@@ -120,6 +122,7 @@ jobs:
   deploy:
     needs: build-test
     runs-on: ${{ inputs.deploy-runner }}
+    environment: ${{ inputs.environment-name }}
     steps:
       - name: AWS Auth
         if: ${{ !env.ACT }}
