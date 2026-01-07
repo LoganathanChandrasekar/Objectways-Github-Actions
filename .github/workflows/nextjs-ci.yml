@@ -124,7 +124,11 @@ jobs:
       - name: Upload Artifact to S3
         if: success() && !env.ACT
         run: |
-          aws s3 cp build-${{ github.sha }}.tar.gz s3://${{ vars.S3_BUCKET_NAME }}/builds/
+          # CLEAN the bucket name
+          CLEAN_BUCKET=$(echo "${{ vars.S3_BUCKET_NAME }}" | tr -d '\r\n' | xargs)
+          
+          echo "Uploading to bucket: $CLEAN_BUCKET"
+          aws s3 cp build-${{ github.sha }}.tar.gz s3://$CLEAN_BUCKET/builds/
         working-directory: ${{ inputs.working-directory }}
 
   deploy:
@@ -143,8 +147,11 @@ jobs:
       - name: Download & Extract from S3
         if: ${{ !env.ACT }}
         run: |
+          # CLEAN the bucket name
+          CLEAN_BUCKET=$(echo "${{ vars.S3_BUCKET_NAME }}" | tr -d '\r\n' | xargs)
+          
           rm -rf deploy-temp && mkdir -p deploy-temp
-          aws s3 cp s3://${{ vars.S3_BUCKET_NAME }}/builds/build-${{ github.sha }}.tar.gz deploy-temp/artifact.tar.gz
+          aws s3 cp s3://$CLEAN_BUCKET/builds/build-${{ github.sha }}.tar.gz deploy-temp/artifact.tar.gz
           cd deploy-temp && tar -xzf artifact.tar.gz
           rm artifact.tar.gz
           
