@@ -3,17 +3,13 @@ name: Next.js CI/CD
 on:
   workflow_call:
     inputs:
-      environment-name: { type: string, required: true }
+      environment-name: { type: string, required: true } 
+      deploy-runner: { type: string, required: true }
       node-version: { type: string, default: '20' }
-      pnpm-version: { type: string, default: '9' }
-      working-directory: { type: string, default: '.' }
+      pnpm-version: { type: string, default: '10' }
       aws-region: { type: string, required: true }
-      deploy-runner: { type: string, default: 'self-hosted' }
+      working-directory: { type: string, default: '.' }
       debug_enabled: { type: boolean, default: false }
-      s3-bucket: { type: string, required: true }
-      pm2-name: { type: string, required: true }
-      deploy-path: { type: string, required: true }
-      env-source-path: { type: string, required: true }
     secrets:
       aws-role-arn: { required: true }
 
