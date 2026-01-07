@@ -55,11 +55,14 @@ jobs:
       - name: setup env file
         if: ${{ !env.ACT }}
         run: |
-          if [ -f "${{ inputs.env-source-path }}" ]; then
-            cp "${{ inputs.env-source-path }}" .env
-            echo " Successfully copied .env from ${{ inputs.env-source-path }}"
+          # Clean the path to remove hidden newlines
+          CLEAN_ENV=$(echo "${{ inputs.env-source-path }}" | xargs)
+          
+          if [ -f "$CLEAN_ENV" ]; then
+            cp "$CLEAN_ENV" .env
+            echo "Successfully copied .env from $CLEAN_ENV"
           else
-            echo " ERROR: .env not found at ${{ inputs.env-source-path }}"
+            echo "ERROR: .env not found at $CLEAN_ENV"
             exit 1
           fi
 
@@ -145,24 +148,34 @@ jobs:
         if: ${{ !env.ACT }}
         shell: bash
         run: |
-          TARGET_DIR="${{ inputs.deploy-path }}"
-          mkdir -p $TARGET_DIR
+          # 1. Clean variables to remove hidden newlines
+          TARGET_DIR=$(echo "${{ inputs.deploy-path }}" | xargs)
+          ENV_SOURCE=$(echo "${{ inputs.env-source-path }}" | xargs)
+          PM2_NAME=$(echo "${{ inputs.pm2-name }}" | xargs)
 
-          # 1. Sync files
-          rsync -a --delete deploy-temp/ $TARGET_DIR/
+          # 2. Safety Check (Prevent root deletion)
+          if [ -z "$TARGET_DIR" ] || [ "$TARGET_DIR" == "/" ]; then
+            echo "ERROR: Invalid Target Directory. Stopping."
+            exit 1
+          fi
 
-          # 2. Restart NestJS application with PM2
-          cd $TARGET_DIR
+          mkdir -p "$TARGET_DIR"
+
+          # 3. Sync files (This cleans the app folder)
+          rsync -a --delete deploy-temp/ "$TARGET_DIR/"
+
+          # 4. Restore .env from the Safe Zone
+          cp "$ENV_SOURCE" "$TARGET_DIR/.env"
+
+          # 5. Restart NestJS application
+          cd "$TARGET_DIR"
+          pm2 delete "$PM2_NAME" || true
           
-          # Delete the old process
-          pm2 delete ${{ inputs.pm2-name }} || true
-          
-          # Start NestJS application (main.js is the entry point after build)
-          # Set PORT variable if needed (default is usually 3000 or from .env)
-          PORT=3000 pm2 start dist/main.js --name "${{ inputs.pm2-name }}"
-          
-          # 3. Save for persistence
+          # Start NestJS application
+          PORT=3000 pm2 start dist/main.js --name "$PM2_NAME"
           pm2 save
           
-          rm -rf ~/deploy-temp
-          echo " Deployment Successful: ${{ inputs.pm2-name }} is live"
+          # 6. Cleanup workspace
+          cd $GITHUB_WORKSPACE
+          rm -rf deploy-temp
+          echo "Backend Deployment Successful: $PM2_NAME is live"
