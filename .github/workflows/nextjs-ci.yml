@@ -54,16 +54,11 @@ jobs:
       - name: setup env file
         if: ${{ !env.ACT }}
         run: |
-          # Use xargs to trim any accidental newlines or spaces from the variable
-          CLEAN_PATH=$(echo "${{ vars.ENV_FILE_SOURCE }}" | xargs)
-          
-          if [ -f "$CLEAN_PATH" ]; then
-            cp "$CLEAN_PATH" .env
-            echo " Successfully copied .env from $CLEAN_PATH"
+          if [ -f "${{ vars.ENV_FILE_SOURCE }}" ]; then
+            cp "${{ vars.ENV_FILE_SOURCE }}" .env
+            echo " Successfully copied .env from ${{ vars.ENV_FILE_SOURCE }}"
           else
-            echo " ERROR: .env not found at '$CLEAN_PATH'"
-            # List directory to help debug if it fails again
-            ls -la /home/ubuntu/envs/
+            echo " ERROR: .env not found at ${{ vars.ENV_FILE_SOURCE }}"
             exit 1
           fi
 
