@@ -53,12 +53,24 @@ jobs:
 
       - name: setup env file
         if: ${{ !env.ACT }}
+        shell: bash
+        env:
+          # We pass the variable into an ENV to handle the newline safely
+          RAW_PATH: ${{ vars.ENV_FILE_SOURCE }}
         run: |
-          if [ -f "${{ vars.ENV_FILE_SOURCE }}" ]; then
-            cp "${{ vars.ENV_FILE_SOURCE }}" .env
-            echo " Successfully copied .env from ${{ vars.ENV_FILE_SOURCE }}"
+          # 1. Clean the path (removes newlines \n and carriage returns \r)
+          CLEAN_PATH=$(echo "$RAW_PATH" | tr -d '\r\n' | xargs)
+
+          echo " Checking for file at: '$CLEAN_PATH'"
+
+          # 2. Check if the file exists
+          if [ -f "$CLEAN_PATH" ]; then
+            cp "$CLEAN_PATH" .env
+            echo " Successfully copied .env from $CLEAN_PATH"
           else
-            echo " ERROR: .env not found at ${{ vars.ENV_FILE_SOURCE }}"
+            echo " ERROR: .env not found at '$CLEAN_PATH'"
+            echo "Printing directory content for debugging:"
+            ls -la /home/ubuntu/envs/ || echo "Folder not accessible"
             exit 1
           fi
 
