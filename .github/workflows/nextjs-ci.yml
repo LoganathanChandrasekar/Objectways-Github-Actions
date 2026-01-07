@@ -142,12 +142,16 @@ jobs:
         shell: bash
         run: |
           TARGET_DIR="${{ inputs.deploy-path }}"
+          WORKSPACE_DIR=$GITHUB_WORKSPACE
           mkdir -p $TARGET_DIR
 
           # 1. Sync files
           rsync -a --delete deploy-temp/ $TARGET_DIR/
 
-          # 2. Restart using Node directly (Elite Standalone Practice)
+          # 2. RESTORE THE ENV FILE
+          cp "${{ inputs.env-source-path }}" "$TARGET_DIR/.env"
+
+          # 3. Restart PM2
           cd $TARGET_DIR
           
           # Delete the old crashing process
@@ -160,5 +164,7 @@ jobs:
           # 3. Save for persistence
           pm2 save
           
-          rm -rf ~/deploy-temp
-          echo " Deployment Successful: ${{ inputs.pm2-name }} is live"
+          # 4. Cleanup
+          cd $WORKSPACE_DIR
+          rm -rf deploy-temp
+          echo "Deployment Successful: ${{ inputs.pm2-name }} is live"
