@@ -144,26 +144,40 @@ jobs:
         if: ${{ !env.ACT }}
         shell: bash
         run: |
-          # Clean variables to remove hidden newlines
+          # 1. Clean variables to remove hidden newlines/spaces
           TARGET_DIR=$(echo "${{ inputs.deploy-path }}" | xargs)
           ENV_SOURCE=$(echo "${{ inputs.env-source-path }}" | xargs)
           PM2_NAME=$(echo "${{ inputs.pm2-name }}" | xargs)
 
+          # 2. THE SAFETY LOCK (DO NOT REMOVE THIS)
+          # This prevents the "Root Disaster" if a variable is empty
+          if [ -z "$TARGET_DIR" ] || [ "$TARGET_DIR" == "/" ] || [ "$TARGET_DIR" == "." ]; then
+            echo "CRITICAL ERROR: TARGET_DIR is empty or root! Stopping deployment."
+            exit 1
+          fi
+
+          echo "Deploying to: $TARGET_DIR"
           mkdir -p "$TARGET_DIR"
 
-          # 1. Sync files (This cleans the app folder)
+          # 3. Sync files (Cleans the app folder only)
           rsync -a --delete deploy-temp/ "$TARGET_DIR/"
 
-          # 2. Restore .env from the Safe Zone
-          cp "$ENV_SOURCE" "$TARGET_DIR/.env"
+          # 4. Restore .env from the Safe Zone
+          if [ -f "$ENV_SOURCE" ]; then
+            cp "$ENV_SOURCE" "$TARGET_DIR/.env"
+            echo "Env restored"
+          else
+            echo "ERROR: Master env not found at $ENV_SOURCE"
+            exit 1
+          fi
 
-          # 3. Restart PM2
+          # 5. Restart PM2
           cd "$TARGET_DIR"
           pm2 delete "$PM2_NAME" || true
           PORT=3000 pm2 start server.js --name "$PM2_NAME"
           pm2 save
           
-          # 4. Cleanup workspace
+          # 6. Cleanup workspace
           cd $GITHUB_WORKSPACE
           rm -rf deploy-temp
-          echo " Deployment Successful: $PM2_NAME is live"
+          echo "Deployment Successful: $PM2_NAME is live"
