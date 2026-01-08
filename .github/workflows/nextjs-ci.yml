@@ -173,8 +173,14 @@ jobs:
 
           # 5. Restart PM2
           cd "$TARGET_DIR"
-          pm2 delete "$PM2_NAME" || true
-          PORT=3000 pm2 start server.js --name "$PM2_NAME"
+          pm2 describe "$PM2_NAME" > /dev/null 2>&1
+          if [ $? -eq 0 ]; then
+            echo "Process exists. Restarting..."
+            PORT=3000 pm2 restart "$PM2_NAME" --update-env
+          else
+            echo "Process not found. Starting fresh..."
+            PORT=3000 pm2 start server.js --name "$PM2_NAME"
+          fi
           pm2 save
           
           # 6. Cleanup workspace
