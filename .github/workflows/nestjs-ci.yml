@@ -151,27 +151,40 @@ jobs:
       - name: Finalize Deployment (NestJS)
         if: ${{ !env.ACT }}
         shell: bash
+        env:
+          # Pass the raw inputs into shell environment variables first
+          # This prevents the script from breaking if there are newlines
+          RAW_TARGET: ${{ inputs.deploy-path }}
+          RAW_ENV: ${{ inputs.env-source-path }}
+          RAW_PM2: ${{ inputs.pm2-name }}
         run: |
-          # 1. Clean variables to remove hidden newlines
-          TARGET_DIR=$(echo "${{ inputs.deploy-path }}" | xargs)
-          ENV_SOURCE=$(echo "${{ inputs.env-source-path }}" | xargs)
-          PM2_NAME=$(echo "${{ inputs.pm2-name }}" | xargs)
+          # 1. Aggressively clean the variables (removes \r and \n)
+          TARGET_DIR=$(echo "$RAW_TARGET" | tr -d '\r\n' | xargs)
+          ENV_SOURCE=$(echo "$RAW_ENV" | tr -d '\r\n' | xargs)
+          PM2_NAME=$(echo "$RAW_PM2" | tr -d '\r\n' | xargs)
 
-          # 2. Safety Check (Prevent root deletion)
+          # 2. Safety Check
           if [ -z "$TARGET_DIR" ] || [ "$TARGET_DIR" == "/" ]; then
-            echo "ERROR: Invalid Target Directory. Stopping."
+            echo "ERROR: Invalid Target Directory ($TARGET_DIR). Stopping."
             exit 1
           fi
 
+          echo "Deploying Backend to: $TARGET_DIR"
           mkdir -p "$TARGET_DIR"
 
-          # 3. Sync files (This cleans the app folder)
+          # 3. Sync files
           rsync -a --delete deploy-temp/ "$TARGET_DIR/"
 
-          # 4. Restore .env from the Safe Zone
-          cp "$ENV_SOURCE" "$TARGET_DIR/.env"
+          # 4. Restore .env
+          if [ -f "$ENV_SOURCE" ]; then
+            cp "$ENV_SOURCE" "$TARGET_DIR/.env"
+            echo "Env restored"
+          else
+            echo "ERROR: Master env not found at $ENV_SOURCE"
+            exit 1
+          fi
 
-          # 5. Restart NestJS application
+          # 5. Smart Restart
           cd "$TARGET_DIR"
           pm2 describe "$PM2_NAME" > /dev/null 2>&1
           if [ $? -eq 0 ]; then
@@ -183,7 +196,7 @@ jobs:
           fi
           pm2 save
           
-          # 6. Cleanup workspace
-          cd $GITHUB_WORKSPACE
+          # 6. Cleanup
+          cd "$GITHUB_WORKSPACE"
           rm -rf deploy-temp
           echo "Backend Deployment Successful: $PM2_NAME is live"
