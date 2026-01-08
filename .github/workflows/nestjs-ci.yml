@@ -176,7 +176,7 @@ jobs:
           pm2 delete "$PM2_NAME" || true
           
           # Start NestJS application
-          PORT=3000 pm2 start dist/main.js --name "$PM2_NAME"
+          PORT=4000 pm2 start dist/main.js --name "$PM2_NAME"
           pm2 save
           
           # 6. Cleanup workspace
