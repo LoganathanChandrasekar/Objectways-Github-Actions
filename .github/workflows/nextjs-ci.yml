@@ -117,8 +117,8 @@ jobs:
       - name: Upload Artifact to S3
         if: success() && !env.ACT
         run: |
-          aws s3 cp build-${{ github.sha }}.tar.gz s3://${{ inputs.s3-bucket }}/builds/
-        working-directory: ${{ inputs.working-directory }}
+          CLEAN_BUCKET=$(echo "${{ inputs.s3-bucket }}" | xargs)
+          aws s3 cp build-${{ github.sha }}.tar.gz s3://$CLEAN_BUCKET/builds/
 
   deploy:
     needs: build-test
@@ -135,10 +135,10 @@ jobs:
       - name: Download & Extract from S3
         if: ${{ !env.ACT }}
         run: |
+          CLEAN_BUCKET=$(echo "${{ inputs.s3-bucket }}" | xargs)
           rm -rf deploy-temp && mkdir -p deploy-temp
-          aws s3 cp s3://${{ inputs.s3-bucket }}/builds/build-${{ github.sha }}.tar.gz deploy-temp/artifact.tar.gz
+          aws s3 cp s3://$CLEAN_BUCKET/builds/build-${{ github.sha }}.tar.gz deploy-temp/artifact.tar.gz
           cd deploy-temp && tar -xzf artifact.tar.gz
-          rm artifact.tar.gz
           
       - name: Finalize Deployment (Standalone Fix)
         if: ${{ !env.ACT }}
