@@ -144,6 +144,8 @@ jobs:
         if: ${{ !env.ACT }}
         shell: bash
         run: |
+          set -x # <--- ADD THIS LINE FOR VERBOSE DEBUGGING
+
           # 1. Clean variables to remove hidden newlines/spaces
           TARGET_DIR=$(echo "${{ inputs.deploy-path }}" | xargs)
           ENV_SOURCE=$(echo "${{ inputs.env-source-path }}" | xargs)
@@ -173,17 +175,24 @@ jobs:
 
           # 5. Restart PM2
           cd "$TARGET_DIR"
-          pm2 describe "$PM2_NAME" > /dev/null 2>&1
-          if [ $? -eq 0 ]; then
-            echo "Process exists. Restarting..."
-            PORT=3000 pm2 restart "$PM2_NAME" --update-env
+          echo "Attempting PM2 operations for '$PM2_NAME' in '$TARGET_DIR'..." # <--- ADD THIS LINE FOR BETTER TRACING
+
+          # --- START MODIFIED PM2 DEBUGGING SECTION ---
+          # Removed "> /dev/null 2>&1" to show pm2 errors
+          if ! pm2 describe "$PM2_NAME"; then
+            echo "PM2 describe failed or process '$PM2_NAME' not found. Attempting to start fresh."
+            # Added --interpreter for robustness
+            PORT=3000 pm2 start server.js --name "$PM2_NAME" --interpreter /usr/bin/node
           else
-            echo "Process not found. Starting fresh..."
-            PORT=3000 pm2 start server.js --name "$PM2_NAME"
+            echo "Process '$PM2_NAME' exists. Restarting..."
+            # Added --interpreter for robustness
+            PORT=3000 pm2 restart "$PM2_NAME" --update-env --interpreter /usr/bin/node
           fi
+          # --- END MODIFIED PM2 DEBUGGING SECTION ---
+
           pm2 save
           
           # 6. Cleanup workspace
-          cd $GITHUB_WORKSPACE
+          cd "$GITHUB_WORKSPACE" # Make sure to quote variables
           rm -rf deploy-temp
           echo "Deployment Successful: $PM2_NAME is live"
