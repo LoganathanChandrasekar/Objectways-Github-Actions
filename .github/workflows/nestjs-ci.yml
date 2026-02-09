@@ -152,12 +152,12 @@ jobs:
         if: ${{ !env.ACT }}
         shell: bash
         env:
-          # Pass the raw inputs into shell environment variables first
-          # This prevents the script from breaking if there are newlines
           RAW_TARGET: ${{ inputs.deploy-path }}
           RAW_ENV: ${{ inputs.env-source-path }}
           RAW_PM2: ${{ inputs.pm2-name }}
         run: |
+          set -x # <--- ADD THIS LINE FOR VERBOSE DEBUGGING
+
           # 1. Aggressively clean the variables (removes \r and \n)
           TARGET_DIR=$(echo "$RAW_TARGET" | tr -d '\r\n' | xargs)
           ENV_SOURCE=$(echo "$RAW_ENV" | tr -d '\r\n' | xargs)
@@ -186,15 +186,23 @@ jobs:
 
           # 5. Smart Restart
           cd "$TARGET_DIR"
-          pm2 describe "$PM2_NAME" > /dev/null 2>&1
-          if [ $? -eq 0 ]; then
-            echo "Process exists. Restarting..."
-            PORT=4000 pm2 restart "$PM2_NAME" --update-env
+          echo "Attempting PM2 operations for '$PM2_NAME' in '$TARGET_DIR'..." # <--- ADD THIS LINE FOR BETTER TRACING
+
+          # --- START MODIFIED PM2 DEBUGGING SECTION ---
+          # Removed "> /dev/null 2>&1" to show pm2 errors.
+          # Using `! command` to check for non-zero exit code (failure).
+          if ! pm2 describe "$PM2_NAME"; then
+            echo "PM2 describe failed or process '$PM2_NAME' not found. Attempting to start fresh."
+            # Added --interpreter for robustness
+            PORT=4000 pm2 start dist/main.js --name "$PM2_NAME" --interpreter /usr/bin/node
           else
-            echo "Process not found. Starting fresh..."
-            PORT=4000 pm2 start dist/main.js --name "$PM2_NAME"
+            echo "Process '$PM2_NAME' exists. Restarting..."
+            # Added --interpreter for robustness
+            PORT=4000 pm2 restart "$PM2_NAME" --update-env --interpreter /usr/bin/node
           fi
-          pm2 save
+          # --- END MODIFIED PM2 DEBUGGING SECTION ---
+
+          pm2 save # Keep this line to save the process list
           
           # 6. Cleanup
           cd "$GITHUB_WORKSPACE"
