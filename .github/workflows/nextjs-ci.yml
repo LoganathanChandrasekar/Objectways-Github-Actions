@@ -68,7 +68,7 @@ jobs:
           fi
 
       - name: Install Dependencies
-        run: pnpm install --no-frozen-lockfile --prefer-offline
+        run: pnpm install --frozen-lockfile
         working-directory: ${{ inputs.working-directory }}
 
       - name: Lint & Security (Parallel)
