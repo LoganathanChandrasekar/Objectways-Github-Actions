@@ -67,7 +67,7 @@ jobs:
           fi
 
       - name: Install Dependencies
-        run: pnpm install --prefer-offline
+        run: pnpm install --no-frozen-lockfile --prefer-offline
         working-directory: ${{ inputs.working-directory }}
 
       - name: Generate Prisma Client
