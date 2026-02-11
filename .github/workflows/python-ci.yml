@@ -12,7 +12,7 @@ on:
       deploy-path: { type: string, required: true }
       env-source-path: { type: string, required: true }
       python-entry-point: { type: string, default: 'app/main.py', description: 'The main Python application entry point for PM2.' }
-      debug_enabled: { type: boolean, default: false } # <--- ADDED THIS LINE
+      debug_enabled: { type: boolean, default: false } 
     secrets:
       aws-role-arn: { required: true }
 
