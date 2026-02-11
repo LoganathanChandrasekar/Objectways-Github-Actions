@@ -1,0 +1,198 @@
+name: Next.js CI/CD
+
+on:
+  workflow_call:
+    inputs:
+      node-version: { type: string, default: '20' }
+      pnpm-version: { type: string, default: '9' }
+      working-directory: { type: string, default: '.' }
+      aws-region: { type: string, required: true }
+      deploy-runner: { type: string, default: 'self-hosted' }
+      debug_enabled: { type: boolean, default: false }
+      s3-bucket: { type: string, required: true }
+      pm2-name: { type: string, required: true }
+      deploy-path: { type: string, required: true }
+      env-source-path: { type: string, required: true }
+    secrets:
+      aws-role-arn: { required: true }
+
+permissions:
+  contents: read
+  id-token: write
+
+jobs:
+  build-test:
+    runs-on: ${{ inputs.deploy-runner }}
+    env:
+      NEXT_TELEMETRY_DISABLED: 1
+      NODE_OPTIONS: "--max-old-space-size=4096"
+    steps:
+      - name: Checkout
+        # v4.2.2
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 
+
+      - name: Setup pnpm
+        uses: pnpm/action-setup@41ff72655975bd51cab0327fa583b6e92b6d3061
+        with:
+          version: ${{ inputs.pnpm-version }}
+
+      - name: Setup Node & Cache
+        uses: actions/setup-node@395ad3262231945c25e8478fd5baf05154b1d79f 
+        with:
+          node-version: ${{ inputs.node-version }}
+          cache: 'pnpm'
+          cache-dependency-path: ${{ inputs.working-directory }}/pnpm-lock.yaml
+
+      - name: Restore Next.js Cache
+        uses: actions/cache@1bd1e32a3bdc45362d1e726936510720a7c30a57 
+        with:
+          path: ${{ inputs.working-directory }}/.next/cache
+          # Key is based on OS, lockfile, and source code to maximize hits
+          key: ${{ runner.os }}-nextjs-${{ hashFiles('**/pnpm-lock.yaml') }}-${{ github.sha }}
+          restore-keys: |
+            ${{ runner.os }}-nextjs-${{ hashFiles('**/pnpm-lock.yaml') }}-
+            ${{ runner.os }}-nextjs-
+
+      - name: setup env file
+        if: ${{ !env.ACT }}
+        run: |
+          # Remove hidden newlines/spaces
+          CLEAN_ENV=$(echo "${{ inputs.env-source-path }}" | xargs)
+          
+          if [ -f "$CLEAN_ENV" ]; then
+            cp "$CLEAN_ENV" .env
+            echo "Successfully copied .env from $CLEAN_ENV"
+          else
+            echo " ERROR: .env not found at $CLEAN_ENV"
+            exit 1
+          fi
+
+      - name: Install Dependencies
+        run: pnpm install --frozen-lockfile
+        working-directory: ${{ inputs.working-directory }}
+
+      - name: Lint & Security (Parallel)
+        run: |
+          echo "Running Audit and Lint in parallel..."
+          (pnpm audit --audit-level=high > audit.log 2>&1 & pnpm lint > lint.log 2>&1 & wait) || true
+          cat audit.log
+          cat lint.log
+        working-directory: ${{ inputs.working-directory }}
+
+      - name: Build Next.js
+        id: build
+        run: pnpm build > build.log 2>&1
+        working-directory: ${{ inputs.working-directory }}
+
+      - name: Diagnostic Summary (On Failure)
+        if: failure()
+        run: |
+          echo "### Build Failure" >> $GITHUB_STEP_SUMMARY
+          echo '```bash' >> $GITHUB_STEP_SUMMARY
+          tail -n 30 ${{ inputs.working-directory }}/build.log >> $GITHUB_STEP_SUMMARY
+          echo '```' >> $GITHUB_STEP_SUMMARY
+        shell: bash
+
+      - name: Prepare Standalone & Zip
+        if: success()
+        run: |
+          # 1. Ensure public and static files are inside standalone for a complete build
+          mkdir -p .next/standalone/public .next/standalone/.next/static
+          [ -d "public" ] && cp -r public/* .next/standalone/public/ || true
+          [ -d ".next/static" ] && cp -r .next/static/* .next/standalone/.next/static/ || true
+          
+          # 2. Create the tarball from the standalone directory
+          cd .next/standalone
+          tar -czf ../../build-${{ github.sha }}.tar.gz .
+          echo "Artifact created: build-${{ github.sha }}.tar.gz"
+        working-directory: ${{ inputs.working-directory }}
+
+      - name: AWS Auth (OIDC)
+        if: success() && !env.ACT
+        uses: aws-actions/configure-aws-credentials@e3dd6a429d7300a6a4c196c26e071d42e0343502
+        with:
+          role-to-assume: ${{ secrets.aws-role-arn }}
+          aws-region: ${{ inputs.aws-region }}
+
+      - name: Upload Artifact to S3
+        if: success() && !env.ACT
+        run: |
+          CLEAN_BUCKET=$(echo "${{ inputs.s3-bucket }}" | xargs)
+          aws s3 cp build-${{ github.sha }}.tar.gz s3://$CLEAN_BUCKET/builds/
+
+  deploy:
+    needs: build-test
+    runs-on: ${{ inputs.deploy-runner }}
+    steps:
+      - name: AWS Auth
+        if: ${{ !env.ACT }}
+        # v4.0.2
+        uses: aws-actions/configure-aws-credentials@e3dd6a429d7300a6a4c196c26e071d42e0343502 
+        with:
+          role-to-assume: ${{ secrets.aws-role-arn }}
+          aws-region: ${{ inputs.aws-region }}
+
+      - name: Download & Extract from S3
+        if: ${{ !env.ACT }}
+        run: |
+          CLEAN_BUCKET=$(echo "${{ inputs.s3-bucket }}" | xargs)
+          rm -rf deploy-temp && mkdir -p deploy-temp
+          aws s3 cp s3://$CLEAN_BUCKET/builds/build-${{ github.sha }}.tar.gz deploy-temp/artifact.tar.gz
+          cd deploy-temp && tar -xzf artifact.tar.gz
+          
+      - name: Finalize Deployment (Standalone Fix)
+        if: ${{ !env.ACT }}
+        shell: bash
+        run: |
+          set -x # <--- ADD THIS LINE FOR VERBOSE DEBUGGING
+
+          # 1. Clean variables to remove hidden newlines/spaces
+          TARGET_DIR=$(echo "${{ inputs.deploy-path }}" | xargs)
+          ENV_SOURCE=$(echo "${{ inputs.env-source-path }}" | xargs)
+          PM2_NAME=$(echo "${{ inputs.pm2-name }}" | xargs)
+
+          # 2. THE SAFETY LOCK (DO NOT REMOVE THIS)
+          # This prevents the "Root Disaster" if a variable is empty
+          if [ -z "$TARGET_DIR" ] || [ "$TARGET_DIR" == "/" ] || [ "$TARGET_DIR" == "." ]; then
+            echo "CRITICAL ERROR: TARGET_DIR is empty or root! Stopping deployment."
+            exit 1
+          fi
+
+          echo "Deploying to: $TARGET_DIR"
+          mkdir -p "$TARGET_DIR"
+
+          # 3. Sync files (Cleans the app folder only)
+          rsync -a --delete deploy-temp/ "$TARGET_DIR/"
+
+          # 4. Restore .env from the Safe Zone
+          if [ -f "$ENV_SOURCE" ]; then
+            cp "$ENV_SOURCE" "$TARGET_DIR/.env"
+            echo "Env restored"
+          else
+            echo "ERROR: Master env not found at $ENV_SOURCE"
+            exit 1
+          fi
+
+          # 5. Restart PM2
+          cd "$TARGET_DIR"
+          echo "Attempting PM2 operations for '$PM2_NAME' in '$TARGET_DIR'..." # <--- ADD THIS LINE FOR BETTER TRACING
+
+          # --- START MODIFIED PM2 DEBUGGING SECTION ---
+          # Removed "> /dev/null 2>&1" to show pm2 errors
+          if ! pm2 describe "$PM2_NAME"; then
+            echo "PM2 describe failed or process '$PM2_NAME' not found. Attempting to start fresh."
+            # Added --interpreter for robustness
+            PORT=3000 pm2 start server.js --name "$PM2_NAME" --interpreter /usr/bin/node
+          else
+            echo "Process '$PM2_NAME' exists. Restarting..."
+            # Added --interpreter for robustness
+            PORT=3000 pm2 restart "$PM2_NAME" --update-env --interpreter /usr/bin/node
+          fi
+          # --- END MODIFIED PM2 DEBUGGING SECTION ---
+
+          pm2 save
+          
+          # 6. Cleanup workspace
+          cd "$GITHUB_WORKSPACE" # Make sure to quote variables
+          rm -rf deploy-temp
+          echo "Deployment Successful: $PM2_NAME is live"
