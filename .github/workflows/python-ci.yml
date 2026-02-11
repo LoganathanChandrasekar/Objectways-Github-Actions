@@ -12,6 +12,7 @@ on:
       deploy-path: { type: string, required: true }
       env-source-path: { type: string, required: true }
       python-entry-point: { type: string, default: 'app/main.py', description: 'The main Python application entry point for PM2.' }
+      debug_enabled: { type: boolean, default: false } # <--- ADDED THIS LINE
     secrets:
       aws-role-arn: { required: true }
 
@@ -97,9 +98,15 @@ jobs:
         if: ${{ !env.ACT }}
         shell: bash
         run: |
+          # Conditionally enable debug output if debug_enabled is true
+          if [[ "${{ inputs.debug_enabled }}" == "true" ]]; then
+            set -x
+          fi
+
           TARGET_DIR="${{ inputs.deploy-path }}"
           PM2_NAME="${{ inputs.pm2-name }}"
           ENV_SOURCE="${{ inputs.env-source-path }}"
+          PYTHON_ENTRY_POINT="${{ inputs.python-entry-point }}"
           
           mkdir -p "$TARGET_DIR"
           rsync -a --delete deploy-temp/ "$TARGET_DIR/"
@@ -109,15 +116,15 @@ jobs:
           fi
           
           cd "$TARGET_DIR"
-          # Try to detect entry point
-          ENTRY=$(ls main.py app.py app/main.py 2>/dev/null | head -n 1)
+          ENTRY="$PYTHON_ENTRY_POINT"
           if [ -z "$ENTRY" ]; then
-            echo "No entry point found. Manual PM2 config required."
-          else
-            if ! pm2 describe "$PM2_NAME" > /dev/null; then
-              pm2 start "$ENTRY" --name "$PM2_NAME" --interpreter python3
-            else
-              pm2 restart "$PM2_NAME" --update-env
-            fi
-            pm2 save
+            echo "CRITICAL ERROR: Python entry point not defined. Stopping deployment."
+            exit 1
           fi
+          
+          if ! pm2 describe "$PM2_NAME" > /dev/null; then
+            pm2 start "$ENTRY" --name "$PM2_NAME" --interpreter python3
+          else
+            pm2 restart "$PM2_NAME" --update-env
+          fi
+          pm2 save
