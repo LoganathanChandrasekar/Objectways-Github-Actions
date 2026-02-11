@@ -11,6 +11,7 @@ on:
       pm2-name: { type: string, required: true }
       deploy-path: { type: string, required: true }
       env-source-path: { type: string, required: true }
+      python-entry-point: { type: string, default: 'app/main.py', description: 'The main Python application entry point for PM2.' }
     secrets:
       aws-role-arn: { required: true }
 
@@ -23,10 +24,10 @@ jobs:
     runs-on: ${{ inputs.deploy-runner }}
     steps:
       - name: Checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
 
       - name: Set up Python
-        uses: actions/setup-python@v5
+        uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065
         with:
           python-version: ${{ inputs.python-version }}
           cache: 'pip'
@@ -42,7 +43,6 @@ jobs:
           pip install ruff
           ruff check .
         working-directory: ${{ inputs.working-directory }}
-        continue-on-error: true
 
       - name: Test
         run: |
@@ -63,7 +63,7 @@ jobs:
 
       - name: AWS Auth
         if: success() && !env.ACT
-        uses: aws-actions/configure-aws-credentials@v4
+        uses: aws-actions/configure-aws-credentials@e3dd6a429d7300a6a4c196c26e071d42e0343502
         with:
           role-to-assume: ${{ secrets.aws-role-arn }}
           aws-region: ${{ inputs.aws-region }}
@@ -71,21 +71,22 @@ jobs:
       - name: Upload to S3
         if: success() && !env.ACT
         run: |
-          aws s3 cp build-${{ github.sha }}.tar.gz s3://${{ inputs.s3-bucket }}/builds/python/
+          aws s3 cp build-${{ github.sha }}.tar.gz s3://${{ inputs.s3-bucket }}/builds/
         working-directory: ${{ inputs.working-directory }}
 
   deploy:
     needs: build-test
     runs-on: ${{ inputs.deploy-runner }}
-    if: success() && !env.ACT
     steps:
       - name: AWS Auth
-        uses: aws-actions/configure-aws-credentials@v4
+        if: ${{ !env.ACT }}
+        uses: aws-actions/configure-aws-credentials@e3dd6a429d7300a6a4c196c26e071d42e0343502
         with:
           role-to-assume: ${{ secrets.aws-role-arn }}
           aws-region: ${{ inputs.aws-region }}
 
       - name: Download & Extract
+        if: ${{ !env.ACT }}
         run: |
           rm -rf deploy-temp && mkdir -p deploy-temp
           aws s3 cp s3://${{ inputs.s3-bucket }}/builds/python/build-${{ github.sha }}.tar.gz deploy-temp/artifact.tar.gz
@@ -93,6 +94,7 @@ jobs:
           rm artifact.tar.gz
 
       - name: Deployment
+        if: ${{ !env.ACT }}
         shell: bash
         run: |
           TARGET_DIR="${{ inputs.deploy-path }}"
