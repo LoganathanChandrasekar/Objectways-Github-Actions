@@ -12,7 +12,7 @@ on:
       deploy-path: { type: string, required: true }
       env-source-path: { type: string, required: true }
       python-entry-point: { type: string, default: 'app/main.py', description: 'The main Python application entry point for PM2.' }
-      debug_enabled: { type: boolean, default: false } 
+      debug_enabled: { type: boolean, default: false }
     secrets:
       aws-role-arn: { required: true }
 
@@ -26,6 +26,12 @@ jobs:
     steps:
       - name: Checkout
         uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
+
+      # Add this step to install rsync
+      - name: Install rsync
+        run: |
+          apt-get update -y
+          apt-get install -y rsync
 
       - name: Set up Python
         uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065
@@ -108,21 +114,21 @@ jobs:
           PM2_NAME="${{ inputs.pm2-name }}"
           ENV_SOURCE="${{ inputs.env-source-path }}"
           PYTHON_ENTRY_POINT="${{ inputs.python-entry-point }}"
-          
+
           mkdir -p "$TARGET_DIR"
           rsync -a --delete deploy-temp/ "$TARGET_DIR/"
-          
+
           if [ -f "$ENV_SOURCE" ]; then
             cp "$ENV_SOURCE" "$TARGET_DIR/.env"
           fi
-          
+
           cd "$TARGET_DIR"
           ENTRY="$PYTHON_ENTRY_POINT"
           if [ -z "$ENTRY" ]; then
             echo "CRITICAL ERROR: Python entry point not defined. Stopping deployment."
             exit 1
           fi
-          
+
           if ! pm2 describe "$PM2_NAME" > /dev/null; then
             pm2 start "$ENTRY" --name "$PM2_NAME" --interpreter python3
           else
