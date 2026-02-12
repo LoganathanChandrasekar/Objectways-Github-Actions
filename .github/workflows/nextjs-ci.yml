@@ -43,15 +43,7 @@ jobs:
           cache: 'pnpm'
           cache-dependency-path: ${{ inputs.working-directory }}/pnpm-lock.yaml
 
-      - name: Restore Next.js Cache
-        uses: actions/cache@1bd1e32a3bdc45362d1e726936510720a7c30a57 
-        with:
-          path: ${{ inputs.working-directory }}/.next/cache
-          # Key is based on OS, lockfile, and source code to maximize hits
-          key: ${{ runner.os }}-nextjs-${{ hashFiles('**/pnpm-lock.yaml') }}-${{ github.sha }}
-          restore-keys: |
-            ${{ runner.os }}-nextjs-${{ hashFiles('**/pnpm-lock.yaml') }}-
-            ${{ runner.os }}-nextjs-
+
 
       - name: setup env file
         if: ${{ !env.ACT }}
@@ -83,7 +75,17 @@ jobs:
         id: build
         run: pnpm build > build.log 2>&1
         working-directory: ${{ inputs.working-directory }}
-
+        
+      - name: Cache Next.js Build Artifacts
+        uses: actions/cache@1bd1e32a3bdc45362d1e726936510720a7c30a57
+        id: cache-nextjs # Optional: good practice to give it an ID
+        with:
+          path: ${{ inputs.working-directory }}/.next/cache # This path must be correct
+          key: ${{ runner.os }}-nextjs-${{ hashFiles('**/pnpm-lock.yaml') }}-${{ github.sha }} # Key for saving (unique per build)
+          restore-keys: | # Keys for restoring (prioritize more specific keys)
+            ${{ runner.os }}-nextjs-${{ hashFiles('**/pnpm-lock.yaml') }}-
+            ${{ runner.os }}-nextjs-
+            
       - name: Diagnostic Summary (On Failure)
         if: failure()
         run: |
