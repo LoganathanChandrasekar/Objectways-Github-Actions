@@ -157,8 +157,7 @@ jobs:
           RAW_ENV: ${{ inputs.env-source-path }}
           RAW_PM2: ${{ inputs.pm2-name }}
         run: |
-          set -x # <--- ADD THIS LINE FOR VERBOSE DEBUGGING
-
+          
           # 1. Aggressively clean the variables (removes \r and \n)
           TARGET_DIR=$(echo "$RAW_TARGET" | tr -d '\r\n' | xargs)
           ENV_SOURCE=$(echo "$RAW_ENV" | tr -d '\r\n' | xargs)
