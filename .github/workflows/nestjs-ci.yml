@@ -104,6 +104,7 @@ jobs:
           cp -r dist deploy-package/
           cp -r node_modules deploy-package/
           cp package.json deploy-package/
+          cp -r src deploy-package/  
           
           # 2. Create the tarball from the deployment package
           cd deploy-package
@@ -186,6 +187,9 @@ jobs:
 
           # 5. Smart Restart
           cd "$TARGET_DIR"
+          echo "Running Prisma migrations..."
+          pnpm prisma migrate deploy --schema=src/prisma/schema.prisma || exit 1
+
           echo "Attempting PM2 operations for '$PM2_NAME' in '$TARGET_DIR'..." # <--- ADD THIS LINE FOR BETTER TRACING
 
           # --- START MODIFIED PM2 DEBUGGING SECTION ---
