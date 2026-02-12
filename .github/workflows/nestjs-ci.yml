@@ -42,16 +42,6 @@ jobs:
           cache: 'pnpm'
           cache-dependency-path: ${{ inputs.working-directory }}/pnpm-lock.yaml
 
-      - name: Restore NestJS Build Cache
-        uses: actions/cache@1bd1e32a3bdc45362d1e726936510720a7c30a57 
-        with:
-          path: ${{ inputs.working-directory }}/dist
-          # Key is based on OS, lockfile, and source code to maximize hits
-          key: ${{ runner.os }}-nestjs-${{ hashFiles('**/pnpm-lock.yaml') }}-${{ github.sha }}
-          restore-keys: |
-            ${{ runner.os }}-nestjs-${{ hashFiles('**/pnpm-lock.yaml') }}-
-            ${{ runner.os }}-nestjs-
-
       - name: setup env file
         if: ${{ !env.ACT }}
         run: |
@@ -86,6 +76,17 @@ jobs:
         id: build
         run: pnpm build > build.log 2>&1
         working-directory: ${{ inputs.working-directory }}
+
+      - name: Cache NestJS Build Artifacts
+        uses: actions/cache@1bd1e32a3bdc45362d1e726936510720a7c30a57
+        id: cache-nestjs # Optional ID
+        with:
+          path: ${{ inputs.working-directory }}/dist # Path to the build output
+          # Key for saving (unique per build)
+          key: ${{ runner.os }}-nestjs-${{ hashFiles('**/pnpm-lock.yaml') }}-${{ github.sha }}
+          restore-keys: | # Keys for restoring (prioritize more specific matches)
+            ${{ runner.os }}-nestjs-${{ hashFiles('**/pnpm-lock.yaml') }}-
+            ${{ runner.os }}-nestjs-
 
       - name: Diagnostic Summary (On Failure)
         if: failure()
