@@ -144,7 +144,7 @@ jobs:
         if: ${{ !env.ACT }}
         shell: bash
         run: |
-          set -x # <--- ADD THIS LINE FOR VERBOSE DEBUGGING
+          
 
           # 1. Clean variables to remove hidden newlines/spaces
           TARGET_DIR=$(echo "${{ inputs.deploy-path }}" | xargs)
