@@ -38,25 +38,40 @@ jobs:
         with:
           python-version: ${{ inputs.python-version }}
           cache: 'pip'
-
-      - name: Install Dependencies
+      
+      - name: Cache Python Dependencies
+        uses: actions/cache@1bd1e32a3bdc45362d1e726936510720a7c30a57
+        id: cache-python-deps
+        with:
+          path: ${{ inputs.working-directory }}/.venv # Adjust path if you use a different venv name/location
+          key: ${{ runner.os }}-python-${{ steps.set-up-python.outputs.python-version }}-${{ hashFiles('**/requirements.txt') }}
+          restore-keys: |
+            ${{ runner.os }}-python-${{ steps.set-up-python.outputs.python-version }}-
+            ${{ runner.os }}-python-
+              
+      - name: Install Dependencies & Audit
         run: |
           python -m pip install --upgrade pip
           if [ -f requirements.txt ]; then pip install -r requirements.txt; fi
+          pip install safety
+          safety check -r ${{ inputs.working-directory }}/requirements.txt
         working-directory: ${{ inputs.working-directory }}
 
-      - name: Lint (Ruff)
+      - name: Lint & Format (Ruff)
         run: |
           pip install ruff
-          ruff check .
+          ruff check . # Check for errors
+          ruff format . # Format code
+          ruff check --fix .
         working-directory: ${{ inputs.working-directory }}
         continue-on-error: true
 
-      - name: Test
+      - name: Test & Coverage
         run: |
           if [ -f pytest.ini ] || [ -d tests ]; then
-            pip install pytest
-            pytest
+            pip install pytest pytest-cov
+            # Run tests with coverage and fail if coverage is below 85%
+            pytest --cov=app --cov-report=xml --cov-report=term-missing --cov-fail-under=85
           fi
         working-directory: ${{ inputs.working-directory }}
 
