@@ -79,12 +79,10 @@ jobs:
 
       - name: Cache NestJS Build Artifacts
         uses: actions/cache@1bd1e32a3bdc45362d1e726936510720a7c30a57
-        id: cache-nestjs # Optional ID
+        id: cache-nestjs 
         with:
-          path: ${{ inputs.working-directory }}/dist # Path to the build output
-          # Key for saving (unique per build)
-          key: ${{ runner.os }}-nestjs-${{ hashFiles('**/pnpm-lock.yaml') }}-${{ github.sha }}
-          restore-keys: | # Keys for restoring (prioritize more specific matches)
+          path: ${{ inputs.working-directory }}/dist 
+          key: ${{ runner.os }}-nestjs-${{ hashFiles('**/pnpm-lock.yaml') }} 
             ${{ runner.os }}-nestjs-${{ hashFiles('**/pnpm-lock.yaml') }}-
             ${{ runner.os }}-nestjs-
 

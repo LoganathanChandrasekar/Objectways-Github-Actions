@@ -78,12 +78,12 @@ jobs:
         
       - name: Cache Next.js Build Artifacts
         uses: actions/cache@1bd1e32a3bdc45362d1e726936510720a7c30a57
-        id: cache-nextjs # Optional: good practice to give it an ID
+        id: cache-nextjs
         with:
-          path: ${{ inputs.working-directory }}/.next/cache # This path must be correct
-          key: ${{ runner.os }}-nextjs-${{ hashFiles('**/pnpm-lock.yaml') }}-${{ github.sha }} # Key for saving (unique per build)
-          restore-keys: | # Keys for restoring (prioritize more specific keys)
-            ${{ runner.os }}-nextjs-${{ hashFiles('**/pnpm-lock.yaml') }}-
+          path: ${{ inputs.working-directory }}/.next/cache
+          key: ${{ runner.os }}-nextjs-${{ hashFiles('**/pnpm-lock.yaml') }} 
+          restore-keys: |
+            ${{ runner.os }}-nextjs-${{ hashFiles('**/pnpm-lock.yaml') }}- 
             ${{ runner.os }}-nextjs-
             
       - name: Diagnostic Summary (On Failure)
