@@ -1,4 +1,4 @@
-name: Next.js CI/CD
+name: Vite Next.js CI/CD
 
 on:
   workflow_call:
