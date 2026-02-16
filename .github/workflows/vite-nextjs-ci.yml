@@ -71,20 +71,20 @@ jobs:
           cat lint.log
         working-directory: ${{ inputs.working-directory }}
 
-      - name: Build Next.js
+      - name: Build Vite App
         id: build
-        run: pnpm build > build.log 2>&1
+        run: pnpm build > build.log 2>&1 # Assuming 'pnpm build' runs Vite build
         working-directory: ${{ inputs.working-directory }}
         
-      - name: Cache Next.js Build Artifacts
+      - name: Cache Vite Build Artifacts
         uses: actions/cache@1bd1e32a3bdc45362d1e726936510720a7c30a57
-        id: cache-nextjs
+        id: cache-vite-build # New ID
         with:
-          path: ${{ inputs.working-directory }}/.next/cache
-          key: ${{ runner.os }}-nextjs-${{ hashFiles('**/pnpm-lock.yaml') }} 
+          path: ${{ inputs.working-directory }}/dist # Correct path for Vite build output
+          key: ${{ runner.os }}-vite-${{ hashFiles('**/pnpm-lock.yaml') }} # Changed prefix to 'vite'
           restore-keys: |
-            ${{ runner.os }}-nextjs-${{ hashFiles('**/pnpm-lock.yaml') }}- 
-            ${{ runner.os }}-nextjs-
+            ${{ runner.os }}-vite-${{ hashFiles('**/pnpm-lock.yaml') }}-
+            ${{ runner.os }}-vite-
             
       - name: Diagnostic Summary (On Failure)
         if: failure()
@@ -95,16 +95,19 @@ jobs:
           echo '```' >> $GITHUB_STEP_SUMMARY
         shell: bash
 
-      - name: Prepare Standalone & Zip
+      - name: Prepare Build Artifact & Zip
         if: success()
         run: |
-          # 1. Ensure public and static files are inside standalone for a complete build
-          mkdir -p .next/standalone/public .next/standalone/.next/static
-          [ -d "public" ] && cp -r public/* .next/standalone/public/ || true
-          [ -d ".next/static" ] && cp -r .next/static/* .next/standalone/.next/static/ || true
+          # 1. Create deployment package with dist, node_modules, and package.json
+          # (Vite typically outputs to 'dist')
+          mkdir -p deploy-package
+          cp -r dist deploy-package/ # Use dist instead of .next/standalone
+          cp -r node_modules deploy-package/ # Keep node_modules for runtime if needed
+          cp package.json deploy-package/
+          # cp -r src deploy-package/ # Only copy src if needed for deployment (e.g., server code in Vite SSR)
           
-          # 2. Create the tarball from the standalone directory
-          cd .next/standalone
+          # 2. Create the tarball from the deployment package
+          cd deploy-package
           tar -czf ../../build-${{ github.sha }}.tar.gz .
           echo "Artifact created: build-${{ github.sha }}.tar.gz"
         working-directory: ${{ inputs.working-directory }}
