@@ -1,4 +1,4 @@
-name: Python CI/CD Template
+name: Python CI/CD
 
 on:
   workflow_call:
