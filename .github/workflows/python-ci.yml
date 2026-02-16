@@ -8,7 +8,6 @@ on:
       aws-region: { type: string, required: true }
       deploy-runner: { type: string, default: 'self-hosted' }
       s3-bucket: { type: string, required: true }
-      pm2-name: { type: string, required: true }
       deploy-path: { type: string, required: true }
       env-source-path: { type: string, required: true }
       python-entry-point: { type: string, default: 'app/main.py', description: 'The main Python application entry point for PM2.' }

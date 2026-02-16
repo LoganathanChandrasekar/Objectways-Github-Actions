@@ -10,7 +10,6 @@ on:
       deploy-runner: { type: string, default: 'self-hosted' }
       debug_enabled: { type: boolean, default: false }
       s3-bucket: { type: string, required: true }
-      pm2-name: { type: string, required: true }
       deploy-path: { type: string, required: true }
       env-source-path: { type: string, required: true }
     secrets:
