@@ -13,6 +13,7 @@ on:
       env-source-path: { type: string, required: true }
       python-entry-point: { type: string, default: 'app/main.py', description: 'The main Python application entry point for PM2.' }
       debug_enabled: { type: boolean, default: false }
+      serviceName: { type: string, default: 'island-haven-backend.service', description: 'The name of the systemd service to manage.' }
     secrets:
       aws-role-arn: { required: true }
 
@@ -119,34 +120,46 @@ jobs:
       - name: Deployment
         if: ${{ !env.ACT }}
         shell: bash
+        working-directory: / 
         run: |
           # Conditionally enable debug output if debug_enabled is true
           if [[ "${{ inputs.debug_enabled }}" == "true" ]]; then
             set -x
           fi
 
-          TARGET_DIR="${{ inputs.deploy-path }}"
-          PM2_NAME="${{ inputs.pm2-name }}"
-          ENV_SOURCE="${{ inputs.env-source-path }}"
-          PYTHON_ENTRY_POINT="${{ inputs.python-entry-point }}"
+          TARGET_DIR=$(echo "${{ inputs.deploy-path }}" | xargs)
+          ENV_SOURCE=$(echo "${{ inputs.env-source-path }}" | xargs)
+          SERVICE_NAME="${{ inputs.serviceName }}" 
 
+          # --- Ensure TARGET_DIR is correct where artifact is extracted ---
+          # The artifact is extracted into ./deploy-temp/ by the previous step.
+          # So, your app's root is likely deploy-temp/
+          APP_ROOT_DIR="./deploy-temp" 
+          
+          # --- Handle target directory ---
+          echo "Deploying Python backend to: $TARGET_DIR"
           mkdir -p "$TARGET_DIR"
-          rsync -a --delete deploy-temp/ "$TARGET_DIR/"
+          
+          # --- Sync files ---
+          rsync -a --delete "$APP_ROOT_DIR/" "$TARGET_DIR/"
 
+          # --- Restore .env ---
           if [ -f "$ENV_SOURCE" ]; then
             cp "$ENV_SOURCE" "$TARGET_DIR/.env"
-          fi
-
-          cd "$TARGET_DIR"
-          ENTRY="$PYTHON_ENTRY_POINT"
-          if [ -z "$ENTRY" ]; then
-            echo "CRITICAL ERROR: Python entry point not defined. Stopping deployment."
+            echo "Env restored"
+          else
+            echo "ERROR: Master env not found at $ENV_SOURCE"
             exit 1
           fi
 
-          if ! pm2 describe "$PM2_NAME" > /dev/null; then
-            pm2 start "$ENTRY" --name "$PM2_NAME" --interpreter python3
-          else
-            pm2 restart "$PM2_NAME" --update-env
-          fi
-          pm2 save
+          # --- Run Python Application Specific Tasks (e.g., Migrations) ---
+          cd "$TARGET_DIR"
+
+          # --- Manage Python Service with systemctl ---
+          echo "Restarting Python backend service: $SERVICE_NAME"
+
+          sudo systemctl restart $SERVICE_NAME || sudo systemctl start $SERVICE_NAME
+          # --- Cleanup ---
+          cd "$GITHUB_WORKSPACE"
+          rm -rf deploy-temp
+          echo "Python Backend Deployment Successful. Service: $SERVICE_NAME is managed by systemd."
