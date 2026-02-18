@@ -137,35 +137,39 @@ jobs:
           aws s3 cp s3://${{ inputs.s3-bucket }}/frontend/builds/build-${{ github.sha }}.tar.gz deploy-temp/artifact.tar.gz
           cd deploy-temp && tar -xzf artifact.tar.gz
           
-      - name: Finalize Deployment (Vite Static)
+      - name: Finalize Deployment (Vite Static) - DEBUG
         if: ${{ !env.ACT }}
         shell: bash
         run: |
-          # 1. Clean variables
           TARGET_DIR=$(echo "${{ inputs.deploy-path }}" | xargs)
-          ENV_SOURCE=$(echo "${{ inputs.env-source-path }}" | xargs)
-
-          # 2. Safety Lock
-          if [ -z "$TARGET_DIR" ] || [ "$TARGET_DIR" == "/" ] || [ "$TARGET_DIR" == "." ]; then
+          
+          if [ -z "$TARGET_DIR" ] || [ "$TARGET_DIR" == "/" ]; then
             echo "CRITICAL ERROR: TARGET_DIR is empty or root! Stopping."
             exit 1
           fi
 
-          echo "Deploying Static Frontend to: $TARGET_DIR"
-          mkdir -p "$TARGET_DIR"
+          echo "DEBUG: Deployment Target: $TARGET_DIR"
+          echo "DEBUG: Current contents of target:"
+          ls -la "$TARGET_DIR"
 
-          # 3. Sync files (Cleans the dist folder and adds new build)
-          rsync -a --delete deploy-temp/ "$TARGET_DIR/"
+          # Use rsync with verbose and dry-run first, then actual sync
+          echo "DEBUG: Running rsync with dry-run for deletion confirmation..."
+          rsync -av --delete --dry-run "$GITHUB_WORKSPACE/deploy-temp/" "$TARGET_DIR/" || true # Dry run, don't fail
 
-          # 4. Restore .env from the Safe Zone
+          echo "DEBUG: Running ACTUAL rsync with verbose output..."
+          rsync -av --delete "$GITHUB_WORKSPACE/deploy-temp/" "$TARGET_DIR/"
+
+          echo "DEBUG: Contents of target AFTER sync:"
+          ls -la "$TARGET_DIR"
+
+          # Restore .env if it exists
+          ENV_SOURCE=$(echo "${{ inputs.env-source-path }}" | xargs)
           if [ -f "$ENV_SOURCE" ]; then
             cp "$ENV_SOURCE" "$TARGET_DIR/.env"
             echo "Env restored from $ENV_SOURCE"
           else
             echo "Note: No .env found at $ENV_SOURCE to restore."
           fi
-
-          # 5. Cleanup
-          cd "$GITHUB_WORKSPACE"
-          rm -rf deploy-temp
-          echo "Deployment Successful. Nginx is serving the new build."
+          
+          rm -rf "$GITHUB_WORKSPACE/deploy-temp" # Clean up temp folder in workspace
+          echo "Deployment Successful. Nginx restart is next."
