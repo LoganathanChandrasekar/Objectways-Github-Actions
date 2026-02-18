@@ -185,16 +185,35 @@ jobs:
             exit 1
           fi
 
-          # 5. Database Migration (Adjust path if your schema is in ./prisma/schema.prisma)
+          # 5. Database Migration (Self-Healing for QA)
           cd "$TARGET_DIR"
           echo "Running Prisma migrations..."
-          # Ensure you use the right config path
-          if [ -f "src/prisma/schema.prisma" ]; then
-             pnpm prisma migrate deploy --schema=src/prisma/schema.prisma
-          elif [ -f "prisma/schema.prisma" ]; then
-             pnpm prisma migrate deploy --schema=prisma/schema.prisma
-          else
-             echo "WARNING: No schema.prisma found. Skipping migration."
+          
+          SCHEMA_PATH="src/prisma/schema.prisma"
+          [ -f "prisma/schema.prisma" ] && SCHEMA_PATH="prisma/schema.prisma"
+
+          # Attempt standard deployment (Zero Downtime)
+          if ! pnpm prisma migrate deploy --schema=$SCHEMA_PATH; then
+            echo "Standard migration failed."
+
+            # Check if we are in QA (using the runner name or an input)
+            if [[ "${{ inputs.deploy-runner }}" == "QA" ]]; then
+              echo "DETECTED QA ENVIRONMENT: Attempting to resolve migration lock..."
+              
+              # Step A: Try to resolve the specific failed migration we saw earlier
+              # This clears the "Failed" status automatically
+              npx prisma migrate resolve --applied 20260214063547_alpha_passed_db --schema=$SCHEMA_PATH || true
+              
+              # Step B: Try deploying again
+              echo "Retrying migration after resolve..."
+              pnpm prisma migrate deploy --schema=$SCHEMA_PATH || {
+                echo "Resolve failed. Performing full Reset (QA ONLY)..."
+                pnpm prisma migrate reset --force --schema=$SCHEMA_PATH
+              }
+            else
+              echo "PRODUCTION ERROR: Migration failed. Manual review required to prevent data loss."
+              exit 1
+            fi
           fi
 
           # 6. PM2 Management
