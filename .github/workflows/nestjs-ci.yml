@@ -189,29 +189,37 @@ jobs:
           cd "$TARGET_DIR"
           echo "Running Prisma migrations..."
           
+          # Auto-detect schema path (Handles src/prisma or root prisma)
           SCHEMA_PATH="src/prisma/schema.prisma"
           [ -f "prisma/schema.prisma" ] && SCHEMA_PATH="prisma/schema.prisma"
 
-          # Attempt standard deployment (Zero Downtime)
+          # Attempt Standard Deployment (Zero Downtime)
           if ! pnpm prisma migrate deploy --schema=$SCHEMA_PATH; then
             echo "Standard migration failed."
 
-            # Check if we are in QA (using the runner name or an input)
+            # Self-Healing Logic: Only for QA runner
             if [[ "${{ inputs.deploy-runner }}" == "QA" ]]; then
-              echo "DETECTED QA ENVIRONMENT: Attempting to resolve migration lock..."
+              echo "DETECTED QA ENVIRONMENT: Attempting to resolve migration lock dynamically..."
               
-              # Step A: Try to resolve the specific failed migration we saw earlier
-              # This clears the "Failed" status automatically
-              npx prisma migrate resolve --applied 20260214063547_alpha_passed_db --schema=$SCHEMA_PATH || true
-              
-              # Step B: Try deploying again
-              echo "Retrying migration after resolve..."
-              pnpm prisma migrate deploy --schema=$SCHEMA_PATH || {
-                echo "Resolve failed. Performing full Reset (QA ONLY)..."
-                pnpm prisma migrate reset --force --schema=$SCHEMA_PATH
-              }
+              # Ask Prisma for the name of the specific migration that is blocked/failed
+              FAILED_MIGRATION=$(npx prisma migrate status --schema=$SCHEMA_PATH | grep -i "failed" | awk '{print $NF}' | tr -d '`."' | head -n 1)
+
+              if [ -n "$FAILED_MIGRATION" ]; then
+                echo "Found blocked migration: $FAILED_MIGRATION. Resolving lock..."
+                
+                # Mark as applied to clear the P3009 lock (This is SAFE - it does not delete data)
+                npx prisma migrate resolve --applied "$FAILED_MIGRATION" --schema=$SCHEMA_PATH || true
+                
+                echo "Retrying migration deployment..."
+                pnpm prisma migrate deploy --schema=$SCHEMA_PATH
+              else
+                # If no specific migration name is found, fail so you can check it manually
+                echo "ERROR: Migration failed but no 'Failed' lock was found. Stopping to protect data."
+                exit 1
+              fi
             else
-              echo "PRODUCTION ERROR: Migration failed. Manual review required to prevent data loss."
+              # Safety: If this happens in Production, stop immediately.
+              echo "PRODUCTION ERROR: Migration failed. Deployment stopped for manual review."
               exit 1
             fi
           fi
