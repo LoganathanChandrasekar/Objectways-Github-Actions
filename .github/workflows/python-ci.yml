@@ -94,7 +94,7 @@ jobs:
       - name: Upload to S3
         if: success() && !env.ACT
         run: |
-          aws s3 cp build-${{ github.sha }}.tar.gz s3://${{ inputs.s3-bucket }}/builds/
+          aws s3 cp build-${{ github.sha }}.tar.gz s3://${{ inputs.s3-bucket }}/backend/builds/build-${{ github.sha }}.tar.gz
         working-directory: ${{ inputs.working-directory }}
 
   deploy:
@@ -112,14 +112,13 @@ jobs:
         if: ${{ !env.ACT }}
         run: |
           rm -rf deploy-temp && mkdir -p deploy-temp
-          aws s3 cp s3://${{ inputs.s3-bucket }}/builds/python/build-${{ github.sha }}.tar.gz deploy-temp/artifact.tar.gz
+          # FIXED: Path now matches /backend/builds/ exactly as defined in the Upload step
+          aws s3 cp s3://${{ inputs.s3-bucket }}/backend/builds/build-${{ github.sha }}.tar.gz deploy-temp/artifact.tar.gz
           cd deploy-temp && tar -xzf artifact.tar.gz
-          rm artifact.tar.gz
 
       - name: Deployment
         if: ${{ !env.ACT }}
         shell: bash
-        working-directory: / 
         run: |
           # Conditionally enable debug output if debug_enabled is true
           if [[ "${{ inputs.debug_enabled }}" == "true" ]]; then
@@ -133,7 +132,7 @@ jobs:
           # --- Ensure TARGET_DIR is correct where artifact is extracted ---
           # The artifact is extracted into ./deploy-temp/ by the previous step.
           # So, your app's root is likely deploy-temp/
-          APP_ROOT_DIR="./deploy-temp" 
+          APP_ROOT_DIR="$GITHUB_WORKSPACE/deploy-temp" 
           
           # --- Handle target directory ---
           echo "Deploying Python backend to: $TARGET_DIR"

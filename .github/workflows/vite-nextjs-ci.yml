@@ -97,18 +97,10 @@ jobs:
       - name: Prepare Build Artifact & Zip
         if: success()
         run: |
-          # 1. Create deployment package with dist, node_modules, and package.json
-          # (Vite typically outputs to 'dist')
           mkdir -p deploy-package
-          cp -r dist deploy-package/ # Use dist instead of .next/standalone
-          cp -r node_modules deploy-package/ # Keep node_modules for runtime if needed
-          cp package.json deploy-package/
-          # cp -r src deploy-package/ # Only copy src if needed for deployment (e.g., server code in Vite SSR)
-          
-          # 2. Create the tarball from the deployment package
+          cp -r dist/* deploy-package/
           cd deploy-package
-          tar -czf ../../build-${{ github.sha }}.tar.gz .
-          echo "Artifact created: build-${{ github.sha }}.tar.gz"
+          tar -czf ../build-${{ github.sha }}.tar.gz .
         working-directory: ${{ inputs.working-directory }}
 
       - name: AWS Auth (OIDC)
@@ -121,8 +113,8 @@ jobs:
       - name: Upload Artifact to S3
         if: success() && !env.ACT
         run: |
-          CLEAN_BUCKET=$(echo "${{ inputs.s3-bucket }}" | xargs)
-          aws s3 cp build-${{ github.sha }}.tar.gz s3://$CLEAN_BUCKET/builds/
+          aws s3 cp build-${{ github.sha }}.tar.gz s3://${{ inputs.s3-bucket }}/frontend/builds/build-${{ github.sha }}.tar.gz
+        working-directory: ${{ inputs.working-directory }}
 
   deploy:
     needs: build-test
@@ -141,47 +133,39 @@ jobs:
         run: |
           CLEAN_BUCKET=$(echo "${{ inputs.s3-bucket }}" | xargs)
           rm -rf deploy-temp && mkdir -p deploy-temp
-          aws s3 cp s3://$CLEAN_BUCKET/builds/build-${{ github.sha }}.tar.gz deploy-temp/artifact.tar.gz
+          # FIXED: Path now includes /frontend/ to match your Upload step
+          aws s3 cp s3://$CLEAN_BUCKET/frontend/builds/build-${{ github.sha }}.tar.gz deploy-temp/artifact.tar.gz
           cd deploy-temp && tar -xzf artifact.tar.gz
           
-      - name: Finalize Deployment (Standalone Fix)
+      - name: Finalize Deployment (Vite Static)
         if: ${{ !env.ACT }}
         shell: bash
         run: |
-          
-
-          # 1. Clean variables to remove hidden newlines/spaces
+          # 1. Clean variables
           TARGET_DIR=$(echo "${{ inputs.deploy-path }}" | xargs)
           ENV_SOURCE=$(echo "${{ inputs.env-source-path }}" | xargs)
-          PM2_NAME=$(echo "${{ inputs.pm2-name }}" | xargs)
 
-          # 2. THE SAFETY LOCK (DO NOT REMOVE THIS)
-          # This prevents the "Root Disaster" if a variable is empty
+          # 2. Safety Lock
           if [ -z "$TARGET_DIR" ] || [ "$TARGET_DIR" == "/" ] || [ "$TARGET_DIR" == "." ]; then
-            echo "CRITICAL ERROR: TARGET_DIR is empty or root! Stopping deployment."
+            echo "CRITICAL ERROR: TARGET_DIR is empty or root! Stopping."
             exit 1
           fi
 
-          echo "Deploying to: $TARGET_DIR"
+          echo "Deploying Static Frontend to: $TARGET_DIR"
           mkdir -p "$TARGET_DIR"
 
-          # 3. Sync files (Cleans the app folder only)
+          # 3. Sync files (Cleans the dist folder and adds new build)
           rsync -a --delete deploy-temp/ "$TARGET_DIR/"
 
           # 4. Restore .env from the Safe Zone
           if [ -f "$ENV_SOURCE" ]; then
             cp "$ENV_SOURCE" "$TARGET_DIR/.env"
-            echo "Env restored"
+            echo "Env restored from $ENV_SOURCE"
           else
-            echo "ERROR: Master env not found at $ENV_SOURCE"
-            exit 1
+            echo "Note: No .env found at $ENV_SOURCE to restore."
           fi
 
-          # 5. Restart PM2
-          cd "$TARGET_DIR"
-          echo "Attempting PM2 operations for '$PM2_NAME' in '$TARGET_DIR'..." # <--- ADD THIS LINE FOR BETTER TRACING          
-          
-          # 6. Cleanup workspace
-          cd "$GITHUB_WORKSPACE" # Make sure to quote variables
+          # 5. Cleanup
+          cd "$GITHUB_WORKSPACE"
           rm -rf deploy-temp
-          echo "Deployment Successful: $PM2_NAME is live"
+          echo "Deployment Successful. Nginx is serving the new build."
