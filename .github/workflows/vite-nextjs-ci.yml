@@ -98,6 +98,7 @@ jobs:
         if: success()
         run: |
           mkdir -p deploy-package
+          # This only copies the final build files, not node_modules
           cp -r dist/* deploy-package/
           cd deploy-package
           tar -czf ../build-${{ github.sha }}.tar.gz .
@@ -131,10 +132,9 @@ jobs:
       - name: Download & Extract from S3
         if: ${{ !env.ACT }}
         run: |
-          CLEAN_BUCKET=$(echo "${{ inputs.s3-bucket }}" | xargs)
           rm -rf deploy-temp && mkdir -p deploy-temp
-          # Path must match the frontend/builds prefix used in Upload
-          aws s3 cp s3://$CLEAN_BUCKET/frontend/builds/build-${{ github.sha }}.tar.gz deploy-temp/artifact.tar.gz
+          # This path now matches the Upload path exactly
+          aws s3 cp s3://${{ inputs.s3-bucket }}/frontend/builds/build-${{ github.sha }}.tar.gz deploy-temp/artifact.tar.gz
           cd deploy-temp && tar -xzf artifact.tar.gz
           
       - name: Finalize Deployment (Vite Static)
