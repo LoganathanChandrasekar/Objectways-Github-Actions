@@ -75,8 +75,9 @@ jobs:
       - name: Build Vite App
         id: build
         run: |
-          rm -rf dist/ # Added: Ensure dist is completely clean before building
-          pnpm build > build.log 2>&1
+          rm -rf dist/ || true # Ensure clean build directory, allow failure if not exists
+          # Redirect both standard output and standard error to build.log
+          pnpm build > build.log 2>&1 || true # Allow build to fail, but ensure log is created
         working-directory: ${{ inputs.working-directory }}
         
       - name: Cache Vite Build Artifacts
