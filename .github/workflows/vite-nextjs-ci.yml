@@ -133,7 +133,7 @@ jobs:
         run: |
           CLEAN_BUCKET=$(echo "${{ inputs.s3-bucket }}" | xargs)
           rm -rf deploy-temp && mkdir -p deploy-temp
-          # FIXED: Path now includes /frontend/ to match your Upload step
+          # Path must match the frontend/builds prefix used in Upload
           aws s3 cp s3://$CLEAN_BUCKET/frontend/builds/build-${{ github.sha }}.tar.gz deploy-temp/artifact.tar.gz
           cd deploy-temp && tar -xzf artifact.tar.gz
           

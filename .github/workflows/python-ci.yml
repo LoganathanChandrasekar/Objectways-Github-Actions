@@ -30,8 +30,8 @@ jobs:
       # Add this step to install rsync
       - name: Install rsync
         run: |
-          apt-get update -y
-          apt-get install -y rsync
+          sudo apt-get update -y
+          sudo apt-get install -y rsync
 
       - name: Set up Python
         uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065
@@ -94,6 +94,7 @@ jobs:
       - name: Upload to S3
         if: success() && !env.ACT
         run: |
+          # Ensure backend/builds path is used
           aws s3 cp build-${{ github.sha }}.tar.gz s3://${{ inputs.s3-bucket }}/backend/builds/build-${{ github.sha }}.tar.gz
         working-directory: ${{ inputs.working-directory }}
 
@@ -112,7 +113,7 @@ jobs:
         if: ${{ !env.ACT }}
         run: |
           rm -rf deploy-temp && mkdir -p deploy-temp
-          # FIXED: Path now matches /backend/builds/ exactly as defined in the Upload step
+          # Path must match backend/builds prefix used in Upload
           aws s3 cp s3://${{ inputs.s3-bucket }}/backend/builds/build-${{ github.sha }}.tar.gz deploy-temp/artifact.tar.gz
           cd deploy-temp && tar -xzf artifact.tar.gz
 
