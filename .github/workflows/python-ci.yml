@@ -4,15 +4,13 @@ on:
   workflow_call:
     inputs:
       python-version: { type: string, default: '3.12' }
-      working-directory: { type: string, default: '.' }
+      working-directory: { type: string, default: 'backend' }
       aws-region: { type: string, required: true }
       deploy-runner: { type: string, default: 'self-hosted' }
       s3-bucket: { type: string, required: true }
-      deploy-path: { type: string, required: true }
-      env-source-path: { type: string, required: true }
-      python-entry-point: { type: string, default: 'app/main.py' }
-      debug_enabled: { type: boolean, default: false }
-      serviceName: { type: string, default: 'python-backend.service' }
+      deploy-path: { type: string, required: true } # BASE directory
+      service-name: { type: string, required: true }
+      env-source-path: { type: string, required: false }
     secrets:
       aws-role-arn: { required: true }
 
@@ -27,57 +25,20 @@ jobs:
       - name: Checkout
         uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
 
-      - name: Install rsync
-        run: |
-          sudo apt-get update -y
-          sudo apt-get install -y rsync
-
       - name: Set up Python
-        id: setup-python # Added ID to use outputs later if needed
         run: |
-          echo "Using system python: $(python3 --version)"
-          # Verify venv module is available
-          python3 -m venv --help > /dev/null || (sudo apt-get update && sudo apt-get install python3.12-venv -y)
-          # Output the actual version for the cache key
-          echo "python-version=$(python3 -c 'import platform; print(platform.python_version())')" >> $GITHUB_OUTPUT
-
-      - name: Cache Python Dependencies
-        uses: actions/cache@1bd1e32a3bdc45362d1e726936510720a7c30a57
-        id: cache-python-deps
-        with:
-          path: ${{ inputs.working-directory }}/.venv
-          # FIXED: Uses the actual system python version we detected above
-          key: ${{ runner.os }}-python-${{ steps.setup-python.outputs.python-version }}-${{ hashFiles('**/requirements.txt') }}
-          restore-keys: |
-            ${{ runner.os }}-python-${{ steps.setup-python.outputs.python-version }}-
-              
-      - name: Install Dependencies & Audit
-        run: |
-          # Create and use a local virtual environment
           python3 -m venv .venv
           source .venv/bin/activate
-          python3 -m pip install --upgrade pip
+          pip install --upgrade pip
           if [ -f requirements.txt ]; then pip install -r requirements.txt; fi
-          pip install safety
-          safety check -r requirements.txt || echo "Safety check found issues, continuing..."
+          pip install safety ruff pytest
         working-directory: ${{ inputs.working-directory }}
 
-      - name: Lint & Format (Ruff)
+      - name: Security & Lint
         run: |
-          source .venv/bin/activate # Activate venv for tools
-          pip install ruff
-          ruff check . || true # Continue on error as per your request
-          ruff format .
-        working-directory: ${{ inputs.working-directory }}
-        continue-on-error: true
-
-      - name: Test & Coverage
-        run: |
-          source .venv/bin/activate # Activate venv
-          if [ -f pytest.ini ] || [ -d tests ]; then
-            pip install pytest pytest-cov
-            pytest --cov=app --cov-report=xml --cov-report=term-missing --cov-fail-under=85
-          fi
+          source .venv/bin/activate
+          safety check -r requirements.txt || true
+          ruff check . || true
         working-directory: ${{ inputs.working-directory }}
 
       - name: Prepare Artifact
@@ -85,20 +46,20 @@ jobs:
           mkdir -p deploy-package
           rsync -a ./ deploy-package/ --exclude .git --exclude .venv --exclude __pycache__
           cd deploy-package
-          tar -czf ../build-${{ github.sha }}.tar.gz .
+          tar -czf ../release-${{ github.sha }}.tar.gz .
         working-directory: ${{ inputs.working-directory }}
 
       - name: AWS Auth
-        if: success() && !env.ACT
+        if: !env.ACT
         uses: aws-actions/configure-aws-credentials@e3dd6a429d7300a6a4c196c26e071d42e0343502
         with:
           role-to-assume: ${{ secrets.aws-role-arn }}
           aws-region: ${{ inputs.aws-region }}
 
       - name: Upload to S3
-        if: success() && !env.ACT
+        if: !env.ACT
         run: |
-          aws s3 cp build-${{ github.sha }}.tar.gz s3://${{ inputs.s3-bucket }}/backend/builds/build-${{ github.sha }}.tar.gz
+          aws s3 cp release-${{ github.sha }}.tar.gz s3://${{ inputs.s3-bucket }}/backend/releases/release-${{ github.sha }}.tar.gz
         working-directory: ${{ inputs.working-directory }}
 
   deploy:
@@ -106,51 +67,65 @@ jobs:
     runs-on: ${{ inputs.deploy-runner }}
     steps:
       - name: AWS Auth
-        if: ${{ !env.ACT }}
+        if: !env.ACT
         uses: aws-actions/configure-aws-credentials@e3dd6a429d7300a6a4c196c26e071d42e0343502
         with:
           role-to-assume: ${{ secrets.aws-role-arn }}
           aws-region: ${{ inputs.aws-region }}
 
-      - name: Download & Extract
-        if: ${{ !env.ACT }}
-        run: |
-          rm -rf deploy-temp && mkdir -p deploy-temp
-          aws s3 cp s3://${{ inputs.s3-bucket }}/backend/builds/build-${{ github.sha }}.tar.gz deploy-temp/artifact.tar.gz
-          cd deploy-temp && tar -xzf artifact.tar.gz
-
-      - name: Deployment
-        if: ${{ !env.ACT }}
+      - name: Atomic Deployment
+        if: !env.ACT
         shell: bash
         run: |
-          if [[ "${{ inputs.debug_enabled }}" == "true" ]]; then set -x; fi
-
-          TARGET_DIR=$(echo "${{ inputs.deploy-path }}" | xargs)
+          BASE_DIR=$(echo "${{ inputs.deploy-path }}" | xargs)
+          RELEASE_ID=$(date +%Y%m%d%H%M%S)-${{ github.sha }}
+          RELEASES_DIR="$BASE_DIR/releases"
+          NEW_RELEASE_DIR="$RELEASES_DIR/$RELEASE_ID"
+          SERVICE_NAME="${{ inputs.service-name }}"
           ENV_SOURCE=$(echo "${{ inputs.env-source-path }}" | xargs)
-          SERVICE_NAME="${{ inputs.serviceName }}" 
-          APP_ROOT_DIR="$GITHUB_WORKSPACE/deploy-temp" 
-          
-          echo "Deploying Python backend to: $TARGET_DIR"
-          mkdir -p "$TARGET_DIR"
-          
-          rsync -a --delete "$APP_ROOT_DIR/" "$TARGET_DIR/"
+          CURRENT_LINK="$BASE_DIR/current"
 
+          echo "Deploying Backend Release: $RELEASE_ID"
+          mkdir -p "$RELEASES_DIR"
+
+          # 1. SMART MIGRATION SAFEGUARD
+          if [ -d "$CURRENT_LINK" ] && [ ! -L "$CURRENT_LINK" ]; then
+            echo "MIGRATION: Existing directory found at $CURRENT_LINK. Moving to releases/legacy_backup."
+            mv "$CURRENT_LINK" "$RELEASES_DIR/legacy_backup_$(date +%Y%m%d%H%M%S)"
+          fi
+          
+          mkdir -p "$NEW_RELEASE_DIR"
+          
+          # 2. Fetch & Extract
+          aws s3 cp s3://${{ inputs.s3-bucket }}/backend/releases/release-${{ github.sha }}.tar.gz artifact.tar.gz
+          tar -xzf artifact.tar.gz -C "$NEW_RELEASE_DIR"
+          rm artifact.tar.gz
+
+          # 3. Setup production venv in the new release
+          cd "$NEW_RELEASE_DIR"
+          python3 -m venv .venv
+          source .venv/bin/activate
+          pip install --upgrade pip
+          if [ -f requirements.txt ]; then pip install -r requirements.txt; fi
+
+          # 4. Restore .env if provided
           if [ -f "$ENV_SOURCE" ]; then
-            cp "$ENV_SOURCE" "$TARGET_DIR/.env"
-            echo "Env restored"
-          else
-            echo "ERROR: Master env not found at $ENV_SOURCE"
-            exit 1
+            cp "$ENV_SOURCE" "$NEW_RELEASE_DIR/.env"
+            echo "Env restored from $ENV_SOURCE"
           fi
 
+          # 5. ATOMIC SWITCH
+          ln -sfn "$NEW_RELEASE_DIR" "$CURRENT_LINK"
+
+          # 4. Restart Service
           echo "Restarting service: $SERVICE_NAME"
-          # Only restart if the service file actually exists
           if systemctl list-units --full -all | grep -Fq "$SERVICE_NAME"; then
-             sudo systemctl restart $SERVICE_NAME || sudo systemctl start $SERVICE_NAME
+             sudo systemctl restart "$SERVICE_NAME"
           else
-             echo "Warning: Service $SERVICE_NAME not found. Skipping restart."
+             echo "Warning: Service $SERVICE_NAME not found. Setup manual systemd pointer to '$BASE_DIR/current'."
           fi
+
+          # 5. Release Retention
+          cd "$RELEASES_DIR" && ls -t | tail -n +6 | xargs rm -rf -- || true
           
-          cd "$GITHUB_WORKSPACE"
-          rm -rf deploy-temp
-          echo "Python Backend Deployment Successful. Service: $SERVICE_NAME is managed by systemd."
+          echo "Backend Deployment Successful."

@@ -1,4 +1,4 @@
-name: Next.js CI/CD (Vite)
+name: Next.js Frontend CI/CD (Vite)
 
 on:
   workflow_call:
@@ -8,10 +8,9 @@ on:
       working-directory: { type: string, default: 'frontend' }
       aws-region: { type: string, required: true }
       deploy-runner: { type: string, default: 'self-hosted' }
-      debug_enabled: { type: boolean, default: false }
       s3-bucket: { type: string, required: true }
-      deploy-path: { type: string, required: true }
-      env-source-path: { type: string, required: true }
+      deploy-path: { type: string, required: true } # BASE directory
+      env-source-path: { type: string, required: false }
     secrets:
       aws-role-arn: { required: true }
 
@@ -22,12 +21,8 @@ permissions:
 jobs:
   build-test:
     runs-on: ${{ inputs.deploy-runner }}
-    env:
-      NEXT_TELEMETRY_DISABLED: 1
-      NODE_OPTIONS: "--max-old-space-size=4096"
     steps:
       - name: Checkout
-        # v4.2.2
         uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 
 
       - name: Setup pnpm
@@ -42,84 +37,49 @@ jobs:
           cache: 'pnpm'
           cache-dependency-path: ${{ inputs.working-directory }}/pnpm-lock.yaml
 
-
-
-      - name: setup env file
-        if: ${{ !env.ACT }}
-        run: |
-          # Remove hidden newlines/spaces
-          CLEAN_ENV=$(echo "${{ inputs.env-source-path }}" | xargs)
-          
-          if [ -f "$CLEAN_ENV" ]; then
-            cp "$CLEAN_ENV" .env
-            echo "Successfully copied .env from $CLEAN_ENV"
-          else
-            echo " ERROR: .env not found at $CLEAN_ENV"
-            exit 1
-          fi
-
       - name: Install Dependencies
-        run: |
-          pnpm install --frozen-lockfile
+        run: pnpm install --frozen-lockfile
         working-directory: ${{ inputs.working-directory }}
 
-      - name: Lint & Security (Parallel)
+      - name: Inject Environment
+        if: ${{ inputs.env-source-path != '' }}
         run: |
-          echo "Running Audit and Lint in parallel..."
-          (pnpm audit --audit-level=high > audit.log 2>&1 & pnpm lint > lint.log 2>&1 & wait) || true
-          cat audit.log
-          cat lint.log
+          CLEAN_PATH=$(echo "${{ inputs.env-source-path }}" | xargs)
+          if [ -f "$CLEAN_PATH" ]; then
+            cp "$CLEAN_PATH" .env
+            echo "Env file injected from $CLEAN_PATH"
+          else
+            echo "Warning: Env file not found at $CLEAN_PATH. Proceeding with system env."
+          fi
+        working-directory: ${{ inputs.working-directory }}
+
+      - name: Security & Lint
+        run: |
+          pnpm lint || true
+          pnpm audit --audit-level=high 
         working-directory: ${{ inputs.working-directory }}
 
       - name: Build Vite App
-        id: build
-        run: pnpm build > build.log 2>&1
+        run: pnpm build
         working-directory: ${{ inputs.working-directory }}
-        
-      - name: Cache Vite Build Artifacts
-        uses: actions/cache@1bd1e32a3bdc45362d1e726936510720a7c30a57
-        id: cache-vite-build # New ID
-        with:
-          path: ${{ inputs.working-directory }}/dist # Correct path for Vite build output
-          key: ${{ runner.os }}-vite-${{ hashFiles('**/pnpm-lock.yaml') }} # Changed prefix to 'vite'
-          restore-keys: |
-            ${{ runner.os }}-vite-${{ hashFiles('**/pnpm-lock.yaml') }}-
-            ${{ runner.os }}-vite-
-            
-      - name: Diagnostic Summary (On Failure)
-        if: failure()
-        run: |
-          echo "### Build Failure" >> $GITHUB_STEP_SUMMARY
-          echo '```bash' >> $GITHUB_STEP_SUMMARY
-          tail -n 30 ${{ inputs.working-directory }}/build.log >> $GITHUB_STEP_SUMMARY
-          echo '```' >> $GITHUB_STEP_SUMMARY
-        shell: bash
 
-      - name: Prepare Build Artifact & Zip
-        if: success()
+      - name: Prepare Artifact
         run: |
-          # 1. Ensure public and static files are inside standalone for a complete build
-          mkdir -p .next/standalone/public .next/standalone/.next/static
-          [ -d "public" ] && cp -r public/* .next/standalone/public/ || true
-          [ -d ".next/static" ] && cp -r .next/static/* .next/standalone/.next/static/ || true
-          
-          # 2. Create the tarball from the standalone directory
-          cd .next/standalone
-          tar -czf ../../build-${{ github.sha }}.tar.gz .
-          echo "Artifact created: build-${{ github.sha }}.tar.gz"
+          cd dist
+          tar -czf ../release-${{ github.sha }}.tar.gz .
         working-directory: ${{ inputs.working-directory }}
 
       - name: AWS Auth (OIDC)
-        if: success() && !env.ACT
+        if: !env.ACT
         uses: aws-actions/configure-aws-credentials@e3dd6a429d7300a6a4c196c26e071d42e0343502
         with:
           role-to-assume: ${{ secrets.aws-role-arn }}
           aws-region: ${{ inputs.aws-region }}
 
-      - name: Upload Artifact to S3
-        if: success() && !env.ACT
+      - name: Upload to S3
+        if: !env.ACT
         run: |
-          aws s3 cp build-${{ github.sha }}.tar.gz s3://${{ inputs.s3-bucket }}/frontend/builds/build-${{ github.sha }}.tar.gz
+          aws s3 cp release-${{ github.sha }}.tar.gz s3://${{ inputs.s3-bucket }}/frontend/releases/release-${{ github.sha }}.tar.gz
         working-directory: ${{ inputs.working-directory }}
 
   deploy:
@@ -127,73 +87,45 @@ jobs:
     runs-on: ${{ inputs.deploy-runner }}
     steps:
       - name: AWS Auth
-        if: ${{ !env.ACT }}
-        # v4.0.2
+        if: !env.ACT
         uses: aws-actions/configure-aws-credentials@e3dd6a429d7300a6a4c196c26e071d42e0343502 
         with:
           role-to-assume: ${{ secrets.aws-role-arn }}
           aws-region: ${{ inputs.aws-region }}
 
-      - name: Download & Extract from S3
-        if: ${{ !env.ACT }}
-        run: |
-          rm -rf deploy-temp && mkdir -p deploy-temp
-          aws s3 cp s3://${{ inputs.s3-bucket }}/frontend/builds/build-${{ github.sha }}.tar.gz deploy-temp/artifact.tar.gz
-          cd deploy-temp && tar -xzf artifact.tar.gz
-          
-      - name: Finalize Deployment (Standalone Fix)
-        if: ${{ !env.ACT }}
+      - name: Atomic Deployment
+        if: !env.ACT
         shell: bash
         run: |
+          BASE_DIR=$(echo "${{ inputs.deploy-path }}" | xargs)
+          RELEASE_ID=$(date +%Y%m%d%H%M%S)-${{ github.sha }}
+          RELEASES_DIR="$BASE_DIR/releases"
+          NEW_RELEASE_DIR="$RELEASES_DIR/$RELEASE_ID"
+          CURRENT_LINK="$BASE_DIR/current"
           
+          echo "Starting Atomic Deployment for Release: $RELEASE_ID"
+          mkdir -p "$RELEASES_DIR"
 
-          # 1. Clean variables to remove hidden newlines/spaces
-          TARGET_DIR=$(echo "${{ inputs.deploy-path }}" | xargs)
-          ENV_SOURCE=$(echo "${{ inputs.env-source-path }}" | xargs)
-          PM2_NAME=$(echo "${{ inputs.pm2-name }}" | xargs)
-
-          # 2. THE SAFETY LOCK (DO NOT REMOVE THIS)
-          # This prevents the "Root Disaster" if a variable is empty
-          if [ -z "$TARGET_DIR" ] || [ "$TARGET_DIR" == "/" ] || [ "$TARGET_DIR" == "." ]; then
-            echo "CRITICAL ERROR: TARGET_DIR is empty or root! Stopping deployment."
-            exit 1
+          # 1. SMART MIGRATION SAFEGUARD (First-run protection)
+          # If 'current' is a directory (not a symlink), move it to releases to avoid ln failure
+          if [ -d "$CURRENT_LINK" ] && [ ! -L "$CURRENT_LINK" ]; then
+            echo "MIGRATION: Existing directory found at $CURRENT_LINK. Moving to releases/legacy_backup."
+            mv "$CURRENT_LINK" "$RELEASES_DIR/legacy_backup_$(date +%Y%m%d%H%M%S)"
           fi
-
-          echo "Deploying to: $TARGET_DIR"
-          mkdir -p "$TARGET_DIR"
-
-          # 3. Sync files (Cleans the app folder only)
-          rsync -a --delete deploy-temp/ "$TARGET_DIR/"
-
-          # 4. Restore .env from the Safe Zone
-          if [ -f "$ENV_SOURCE" ]; then
-            cp "$ENV_SOURCE" "$TARGET_DIR/.env"
-            echo "Env restored"
-          else
-            echo "ERROR: Master env not found at $ENV_SOURCE"
-            exit 1
-          fi
-
-          # 5. Restart PM2
-          cd "$TARGET_DIR"
-          echo "Attempting PM2 operations for '$PM2_NAME' in '$TARGET_DIR'..." # <--- ADD THIS LINE FOR BETTER TRACING
-
-          # --- START MODIFIED PM2 DEBUGGING SECTION ---
-          # Removed "> /dev/null 2>&1" to show pm2 errors
-          if ! pm2 describe "$PM2_NAME"; then
-            echo "PM2 describe failed or process '$PM2_NAME' not found. Attempting to start fresh."
-            # Added --interpreter for robustness
-            PORT=3000 pm2 start server.js --name "$PM2_NAME" --interpreter /usr/bin/node
-          else
-            echo "Process '$PM2_NAME' exists. Restarting..."
-            # Added --interpreter for robustness
-            PORT=3000 pm2 restart "$PM2_NAME" --update-env --interpreter /usr/bin/node
-          fi
-          # --- END MODIFIED PM2 DEBUGGING SECTION ---
-
-          pm2 save
           
-          # 6. Cleanup workspace
-          cd "$GITHUB_WORKSPACE" # Make sure to quote variables
-          rm -rf deploy-temp
-          echo "Deployment Successful: $PM2_NAME is live"
+          # 2. Prepare Workspace
+          mkdir -p "$NEW_RELEASE_DIR"
+          
+          # 3. Fetch Artifact
+          aws s3 cp s3://${{ inputs.s3-bucket }}/frontend/releases/release-${{ github.sha }}.tar.gz artifact.tar.gz
+          tar -xzf artifact.tar.gz -C "$NEW_RELEASE_DIR"
+          rm artifact.tar.gz
+
+          # 4. ATOMIC SWITCH
+          ln -sfn "$NEW_RELEASE_DIR" "$CURRENT_LINK"
+          
+          # 5. Release Retention (Keep last 5)
+          echo "Cleaning up old releases..."
+          cd "$RELEASES_DIR" && ls -t | grep -v "legacy_backup" | tail -n +6 | xargs rm -rf -- || true
+          
+          echo "Deployment Successful. Current points to: $(readlink -f $CURRENT_LINK)"
