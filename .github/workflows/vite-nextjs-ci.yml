@@ -1,11 +1,11 @@
-name: Vite Next.js CI/CD
+name: Next.js CI/CD (Vite)
 
 on:
   workflow_call:
     inputs:
       node-version: { type: string, default: '20' }
-      pnpm-version: { type: string, default: '9' }
-      working-directory: { type: string, default: '.' }
+      pnpm-version: { type: string, default: '10' }
+      working-directory: { type: string, default: 'frontend' }
       aws-region: { type: string, required: true }
       deploy-runner: { type: string, default: 'self-hosted' }
       debug_enabled: { type: boolean, default: false }
@@ -60,7 +60,6 @@ jobs:
 
       - name: Install Dependencies
         run: |
-          pnpm cache clean --force # Added: Aggressively clean pnpm cache
           pnpm install --frozen-lockfile
         working-directory: ${{ inputs.working-directory }}
 
@@ -74,10 +73,7 @@ jobs:
 
       - name: Build Vite App
         id: build
-        run: |
-          rm -rf dist/ || true # Ensure clean build directory, allow failure if not exists
-          # Redirect both standard output and standard error to build.log
-          pnpm build > build.log 2>&1 || true # Allow build to fail, but ensure log is created
+        run: pnpm build > build.log 2>&1
         working-directory: ${{ inputs.working-directory }}
         
       - name: Cache Vite Build Artifacts
@@ -102,11 +98,15 @@ jobs:
       - name: Prepare Build Artifact & Zip
         if: success()
         run: |
-          mkdir -p deploy-package
-          # This only copies the final build files, not node_modules
-          cp -r dist/* deploy-package/
-          cd deploy-package
-          tar -czf ../build-${{ github.sha }}.tar.gz .
+          # 1. Ensure public and static files are inside standalone for a complete build
+          mkdir -p .next/standalone/public .next/standalone/.next/static
+          [ -d "public" ] && cp -r public/* .next/standalone/public/ || true
+          [ -d ".next/static" ] && cp -r .next/static/* .next/standalone/.next/static/ || true
+          
+          # 2. Create the tarball from the standalone directory
+          cd .next/standalone
+          tar -czf ../../build-${{ github.sha }}.tar.gz .
+          echo "Artifact created: build-${{ github.sha }}.tar.gz"
         working-directory: ${{ inputs.working-directory }}
 
       - name: AWS Auth (OIDC)
@@ -137,56 +137,63 @@ jobs:
       - name: Download & Extract from S3
         if: ${{ !env.ACT }}
         run: |
-          CLEAN_BUCKET=$(echo "${{ inputs.s3-bucket }}" | xargs)
           rm -rf deploy-temp && mkdir -p deploy-temp
-          aws s3 cp s3://$CLEAN_BUCKET/frontend/builds/build-${{ github.sha }}.tar.gz deploy-temp/artifact.tar.gz
-          cd deploy-temp
-          tar -xzf artifact.tar.gz
-          rm artifact.tar.gz # ADDED: Delete the tarball after extraction
+          aws s3 cp s3://${{ inputs.s3-bucket }}/frontend/builds/build-${{ github.sha }}.tar.gz deploy-temp/artifact.tar.gz
+          cd deploy-temp && tar -xzf artifact.tar.gz
           
-      - name: Finalize Deployment (Vite Static)
+      - name: Finalize Deployment (Standalone Fix)
         if: ${{ !env.ACT }}
         shell: bash
         run: |
+          
+
+          # 1. Clean variables to remove hidden newlines/spaces
           TARGET_DIR=$(echo "${{ inputs.deploy-path }}" | xargs)
           ENV_SOURCE=$(echo "${{ inputs.env-source-path }}" | xargs)
+          PM2_NAME=$(echo "${{ inputs.pm2-name }}" | xargs)
 
-          if [ -z "$TARGET_DIR" ] || [ "$TARGET_DIR" == "/" ]; then
-            echo "CRITICAL ERROR: TARGET_DIR is empty or root! Stopping."
+          # 2. THE SAFETY LOCK (DO NOT REMOVE THIS)
+          # This prevents the "Root Disaster" if a variable is empty
+          if [ -z "$TARGET_DIR" ] || [ "$TARGET_DIR" == "/" ] || [ "$TARGET_DIR" == "." ]; then
+            echo "CRITICAL ERROR: TARGET_DIR is empty or root! Stopping deployment."
             exit 1
           fi
 
-          echo "DEBUG: Deployment Target: $TARGET_DIR"
-          
-          # AGGRESSIVE CLEANUP: Completely delete the target folder and recreate it
-          echo "DEBUG: Performing aggressive cleanup of $TARGET_DIR"
-          sudo rm -rf "$TARGET_DIR"/* || true # Use sudo and allow failure if dir is empty/protected
-          sudo rm -rf "$TARGET_DIR"/.env || true # Ensure .env is also gone
-          sudo mkdir -p "$TARGET_DIR" # Recreate to ensure clean state
-          
-          # Ensure correct permissions for the recreated target directory
-          sudo chown -R ubuntu:www-data "$TARGET_DIR"
-          sudo chmod -R 755 "$TARGET_DIR"
+          echo "Deploying to: $TARGET_DIR"
+          mkdir -p "$TARGET_DIR"
 
-          echo "DEBUG: Running ACTUAL rsync with verbose output..."
-          rsync -av --delete "$GITHUB_WORKSPACE/deploy-temp/" "$TARGET_DIR/"
+          # 3. Sync files (Cleans the app folder only)
+          rsync -a --delete deploy-temp/ "$TARGET_DIR/"
 
-          echo "DEBUG: Contents of target AFTER sync:"
-          ls -la "$TARGET_DIR"
-          
-          # Restore .env
+          # 4. Restore .env from the Safe Zone
           if [ -f "$ENV_SOURCE" ]; then
             cp "$ENV_SOURCE" "$TARGET_DIR/.env"
-            echo "Env restored from $ENV_SOURCE"
+            echo "Env restored"
           else
-            echo "Note: No .env found at $ENV_SOURCE to restore."
+            echo "ERROR: Master env not found at $ENV_SOURCE"
+            exit 1
           fi
 
-          # Clear Nginx's cache and restart
-          echo "DEBUG: Clearing Nginx cache and restarting Nginx..."
-          sudo rm -rf /var/cache/nginx/* || true
-          sudo systemctl restart nginx
-          sudo systemctl status nginx # Check status
+          # 5. Restart PM2
+          cd "$TARGET_DIR"
+          echo "Attempting PM2 operations for '$PM2_NAME' in '$TARGET_DIR'..." # <--- ADD THIS LINE FOR BETTER TRACING
+
+          # --- START MODIFIED PM2 DEBUGGING SECTION ---
+          # Removed "> /dev/null 2>&1" to show pm2 errors
+          if ! pm2 describe "$PM2_NAME"; then
+            echo "PM2 describe failed or process '$PM2_NAME' not found. Attempting to start fresh."
+            # Added --interpreter for robustness
+            PORT=3000 pm2 start server.js --name "$PM2_NAME" --interpreter /usr/bin/node
+          else
+            echo "Process '$PM2_NAME' exists. Restarting..."
+            # Added --interpreter for robustness
+            PORT=3000 pm2 restart "$PM2_NAME" --update-env --interpreter /usr/bin/node
+          fi
+          # --- END MODIFIED PM2 DEBUGGING SECTION ---
+
+          pm2 save
           
-          rm -rf "$GITHUB_WORKSPACE/deploy-temp"
-          echo "Deployment Successful. Nginx is serving the new build."
+          # 6. Cleanup workspace
+          cd "$GITHUB_WORKSPACE" # Make sure to quote variables
+          rm -rf deploy-temp
+          echo "Deployment Successful: $PM2_NAME is live"
