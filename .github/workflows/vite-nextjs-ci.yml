@@ -54,10 +54,14 @@ jobs:
           fi
         working-directory: ${{ inputs.working-directory }}
 
-      - name: Security & Lint
-        run: |
-          pnpm lint || true
-          pnpm audit --audit-level=high 
+      - name: Code Quality (Lint)
+        run: pnpm lint
+        continue-on-error: true
+        working-directory: ${{ inputs.working-directory }}
+
+      - name: Security Audit (Dependencies)
+        run: pnpm audit --audit-level=high
+        continue-on-error: true
         working-directory: ${{ inputs.working-directory }}
 
       - name: Build Vite App

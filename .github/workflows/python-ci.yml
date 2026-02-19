@@ -36,11 +36,18 @@ jobs:
           pip install safety ruff pytest
         working-directory: ${{ inputs.working-directory }}
 
-      - name: Security & Lint
+      - name: Dependency Audit (Safety)
         run: |
           source .venv/bin/activate
-          safety check -r requirements.txt || true
-          ruff check . || true
+          safety check -r requirements.txt
+        continue-on-error: true
+        working-directory: ${{ inputs.working-directory }}
+
+      - name: Code Quality (Ruff)
+        run: |
+          source .venv/bin/activate
+          ruff check .
+        continue-on-error: true
         working-directory: ${{ inputs.working-directory }}
 
       - name: Prepare Artifact
