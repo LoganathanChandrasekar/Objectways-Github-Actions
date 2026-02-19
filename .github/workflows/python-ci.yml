@@ -9,8 +9,10 @@ on:
       deploy-runner: { type: string, default: 'self-hosted' }
       s3-bucket: { type: string, required: true }
       deploy-path: { type: string, required: true } # BASE directory
-      service-name: { type: string, required: true }
       env-source-path: { type: string, required: false }
+      debug_enabled: { type: boolean, default: false }
+      python-entry-point: { type: string, required: false }
+      serviceName: { type: string, required: true }
     secrets:
       aws-role-arn: { required: true }
 
@@ -81,7 +83,7 @@ jobs:
           RELEASE_ID=$(date +%Y%m%d%H%M%S)-${{ github.sha }}
           RELEASES_DIR="$BASE_DIR/releases"
           NEW_RELEASE_DIR="$RELEASES_DIR/$RELEASE_ID"
-          SERVICE_NAME="${{ inputs.service-name }}"
+          SERVICE_NAME="${{ inputs.serviceName }}"
           ENV_SOURCE=$(echo "${{ inputs.env-source-path }}" | xargs)
           CURRENT_LINK="$BASE_DIR/current"
 

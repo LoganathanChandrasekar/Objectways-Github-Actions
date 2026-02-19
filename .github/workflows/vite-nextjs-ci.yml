@@ -11,6 +11,7 @@ on:
       s3-bucket: { type: string, required: true }
       deploy-path: { type: string, required: true } # BASE directory
       env-source-path: { type: string, required: false }
+      debug_enabled: { type: boolean, default: false }
     secrets:
       aws-role-arn: { required: true }
 
