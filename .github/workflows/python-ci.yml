@@ -50,14 +50,14 @@ jobs:
         working-directory: ${{ inputs.working-directory }}
 
       - name: AWS Auth
-        if: !env.ACT
+        if: ${{ !env.ACT }}
         uses: aws-actions/configure-aws-credentials@e3dd6a429d7300a6a4c196c26e071d42e0343502
         with:
           role-to-assume: ${{ secrets.aws-role-arn }}
           aws-region: ${{ inputs.aws-region }}
 
       - name: Upload to S3
-        if: !env.ACT
+        if: ${{ !env.ACT }}
         run: |
           aws s3 cp release-${{ github.sha }}.tar.gz s3://${{ inputs.s3-bucket }}/backend/releases/release-${{ github.sha }}.tar.gz
         working-directory: ${{ inputs.working-directory }}
@@ -67,14 +67,14 @@ jobs:
     runs-on: ${{ inputs.deploy-runner }}
     steps:
       - name: AWS Auth
-        if: !env.ACT
+        if: ${{ !env.ACT }}
         uses: aws-actions/configure-aws-credentials@e3dd6a429d7300a6a4c196c26e071d42e0343502
         with:
           role-to-assume: ${{ secrets.aws-role-arn }}
           aws-region: ${{ inputs.aws-region }}
 
       - name: Atomic Deployment
-        if: !env.ACT
+        if: ${{ !env.ACT }}
         shell: bash
         run: |
           BASE_DIR=$(echo "${{ inputs.deploy-path }}" | xargs)
